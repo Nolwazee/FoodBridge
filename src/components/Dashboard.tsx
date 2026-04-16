@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType } from '@/src/lib/firebase';
-import { collection, query, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, orderBy } from 'firebase/firestore';
+import { collection, query, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, orderBy } from 'firebase/firestore';
 import { FoodListing, UserProfile } from '@/src/types';
 import ListingCard from './ListingCard';
 import Sidebar from './Sidebar';
@@ -79,6 +79,32 @@ export default function Dashboard({ profile }: DashboardProps) {
     }
   };
 
+  const handleDeleteListing = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'listings', id));
+      toast.success("Listing removed successfully.");
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `listings/${id}`);
+    }
+  };
+
+  const handleReportListing = async (id: string) => {
+    try {
+      await addDoc(collection(db, 'flags'), {
+        type: 'Reported Listing',
+        severity: 'MEDIUM',
+        status: 'Open',
+        description: 'An NGO reported this listing for review.',
+        userId: profile.uid,
+        listingId: id,
+        createdAt: serverTimestamp()
+      });
+      toast.success("Listing reported to administrators.");
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'flags');
+    }
+  };
+
   const myListings = listings.filter(l => l.donorId === profile.uid);
   const availableListings = listings.filter(l => l.status === 'available');
   const myClaims = listings.filter(l => l.claimedBy === profile.uid);
@@ -99,7 +125,7 @@ export default function Dashboard({ profile }: DashboardProps) {
               { label: 'Active Listings', value: myListings.filter(l => l.status === 'available').length, sub: 'Ready for NGO claims', icon: Package },
               { label: 'Completed Donations', value: myListings.filter(l => l.status === 'collected').length, sub: 'Completed pickup cycles', icon: CheckCircle2 },
               { label: 'Total Claims', value: myListings.filter(l => l.status === 'claimed').length, sub: 'Across all listings', icon: History },
-              { label: 'Avg. Rating', value: '4.8', sub: 'Trusted retailer score', icon: Star },
+              { label: 'Total Listings', value: myListings.length, sub: 'All-time contributions', icon: Star },
             ].map((stat, i) => (
               <div key={i} className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
                 <div className="text-xs font-medium text-gray-400 mb-2">{stat.label}</div>
@@ -159,8 +185,8 @@ export default function Dashboard({ profile }: DashboardProps) {
           {[
             { label: 'Active Claims', value: myClaims.filter(l => l.status === 'claimed').length, sub: 'Pending and in-transit pickups', icon: Clock },
             { label: 'Completed Pickups', value: myClaims.filter(l => l.status === 'collected').length, sub: 'Delivered successfully', icon: CheckCircle2 },
-            { label: 'Food Received (kg)', value: '50', sub: 'Based on current demo claims', icon: Package },
-            { label: 'Reliability Score', value: '4.9', sub: 'Excellent partner status', icon: Star },
+            { label: 'Total Requests', value: myClaims.length, sub: 'All attempted claims', icon: Package },
+            { label: 'Available Food', value: availableListings.length, sub: 'Listings ready in network', icon: Star },
           ].map((stat, i) => (
             <div key={i} className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
               <div className="text-xs font-medium text-gray-400 mb-2">{stat.label}</div>
@@ -240,6 +266,8 @@ export default function Dashboard({ profile }: DashboardProps) {
                   listing={listing} 
                   canClaim={profile.role === 'ngo'} 
                   onClaim={handleClaim}
+                  canReport={profile.role === 'ngo'}
+                  onReport={handleReportListing}
                 />
               ))}
             </div>
@@ -306,7 +334,12 @@ export default function Dashboard({ profile }: DashboardProps) {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {myListings.map(listing => (
-                <ListingCard key={listing.id} listing={listing} />
+                <ListingCard 
+                  key={listing.id} 
+                  listing={listing} 
+                  canDelete={listing.status === 'available'}
+                  onDelete={handleDeleteListing}
+                />
               ))}
             </div>
           </div>

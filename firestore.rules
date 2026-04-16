@@ -109,5 +109,11 @@ service cloud.firestore {
       allow create: if isAuthenticated() && request.resource.data.ngoId == request.auth.uid;
       allow update: if isAdmin();
     }
+
+    match /flags/{flagId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if isAdmin();
+    }
   }
 }

@@ -1,9 +1,8 @@
 {
-  "apiKey": "AIzaSy-PLACEHOLDER",
-  "authDomain": "surplus-share-sa.firebaseapp.com",
-  "projectId": "surplus-share-sa",
-  "storageBucket": "surplus-share-sa.appspot.com",
-  "messagingSenderId": "123456789",
-  "appId": "1:123456789:web:abcdef",
-  "firestoreDatabaseId": "(default)"
+  "apiKey": "AIzaSyCBpnPBdfguMkkhqbI2d35K_gxJ11A0sUk",
+  "authDomain": "ai-studio-applet-webapp-db8ad.firebaseapp.com",
+  "projectId": "ai-studio-applet-webapp-db8ad",
+  "storageBucket": "ai-studio-applet-webapp-db8ad.firebasestorage.app",
+  "messagingSenderId": "416585885385",
+  "appId": "1:416585885385:web:cfb00d701cd59cb96c8f18"
 }

@@ -41,3 +41,14 @@ export interface VerificationRequest {
   status: 'pending' | 'approved' | 'rejected';
   createdAt: any;
 }
+
+export interface FlaggedActivity {
+  id: string;
+  type: string;
+  severity: 'LOW' | 'MEDIUM' | 'HIGH';
+  status: 'Open' | 'Investigating' | 'Resolved';
+  description: string;
+  userId: string;
+  listingId?: string;
+  createdAt: any;
+}

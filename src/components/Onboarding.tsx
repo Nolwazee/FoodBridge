@@ -49,8 +49,14 @@ export default function Onboarding({ profile, onComplete }: OnboardingProps) {
           <div className="inline-flex items-center justify-center p-3 bg-[#E9F5F1] rounded-2xl mb-4">
             <ShieldCheck className="h-8 w-8 text-[#2D9C75]" />
           </div>
-          <h1 className="text-3xl font-bold text-gray-900">NGO Verification</h1>
-          <p className="text-gray-500 mt-2">Please provide your organization details to begin the vetting process.</p>
+          <h1 className="text-3xl font-bold text-gray-900">
+            {profile.role === 'ngo' ? 'NGO Verification' : 'Retailer Profile Setup'}
+          </h1>
+          <p className="text-gray-500 mt-2">
+            {profile.role === 'ngo' 
+              ? 'Please provide your organization details to begin the vetting process.' 
+              : 'Please provide your business details to start listing surplus food.'}
+          </p>
         </div>
 
         <Card className="border-none shadow-xl shadow-gray-200/50 rounded-3xl overflow-hidden">
@@ -62,7 +68,9 @@ export default function Onboarding({ profile, onComplete }: OnboardingProps) {
             <form onSubmit={handleSubmit} className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
-                  <Label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Registration Number (NPO/NPC)</Label>
+                  <Label className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+                    {profile.role === 'ngo' ? 'Registration Number (NPO/NPC)' : 'Business Registration Number'}
+                  </Label>
                   <div className="relative">
                     <FileText className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
                     <Input 
@@ -75,7 +83,9 @@ export default function Onboarding({ profile, onComplete }: OnboardingProps) {
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Organization Name</Label>
+                  <Label className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+                    {profile.role === 'ngo' ? 'Organization Name' : 'Store/Business Name'}
+                  </Label>
                   <div className="relative">
                     <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
                     <Input 
@@ -126,10 +136,12 @@ export default function Onboarding({ profile, onComplete }: OnboardingProps) {
               </div>
 
               <div className="space-y-2">
-                <Label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Organization Mission</Label>
+                <Label className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+                  {profile.role === 'ngo' ? 'Organization Mission' : 'Business Description'}
+                </Label>
                 <textarea 
                   required
-                  placeholder="Tell us about your community feeding programs..." 
+                  placeholder={profile.role === 'ngo' ? "Tell us about your community feeding programs..." : "Tell us about what type of food your business typically handles..."} 
                   className="w-full min-h-[120px] p-4 rounded-xl border border-gray-100 focus:border-[#2D9C75] focus:ring-[#2D9C75] text-sm"
                   value={formData.description}
                   onChange={e => setFormData({...formData, description: e.target.value})}
@@ -141,7 +153,7 @@ export default function Onboarding({ profile, onComplete }: OnboardingProps) {
                 disabled={loading}
                 className="w-full bg-[#2D9C75] hover:bg-[#258563] text-white h-14 rounded-xl font-bold text-lg shadow-lg shadow-[#2D9C75]/20"
               >
-                {loading ? "Submitting..." : "Submit for Verification"}
+                {loading ? "Submitting..." : (profile.role === 'ngo' ? "Submit for Verification" : "Complete Profile Setup")}
               </Button>
             </form>
           </CardContent>

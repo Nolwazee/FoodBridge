@@ -18,40 +18,37 @@ export default function App() {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
   useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
+    let unsubscribeProfile: (() => void) | undefined;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
+      
       if (currentUser) {
-        // Initial fetch
-        try {
-          const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
-          if (userDoc.exists()) {
-            setProfile({ uid: userDoc.id, ...userDoc.data() } as any);
+        // Real-time profile updates instead of a slow blocking getDoc
+        unsubscribeProfile = onSnapshot(doc(db, 'users', currentUser.uid), (docSnapshot) => {
+          if (docSnapshot.exists()) {
+            setProfile({ uid: docSnapshot.id, ...docSnapshot.data() } as any);
           } else {
             setProfile(null);
-            setIsAuthModalOpen(true);
+            // Wait slightly before opening modal to avoid flashy jumps
+            setTimeout(() => setIsAuthModalOpen(true), 100);
           }
-        } catch (error) {
-          console.error("Error fetching profile:", error);
-        }
-
-        // Real-time profile updates
-        const unsubscribeProfile = onSnapshot(doc(db, 'users', currentUser.uid), (doc) => {
-          if (doc.exists()) {
-            setProfile({ uid: doc.id, ...doc.data() } as any);
-          }
+          setLoading(false);
         }, (error) => {
           handleFirestoreError(error, OperationType.GET, `users/${currentUser.uid}`);
+          setLoading(false);
         });
-
-        setLoading(false);
-        return () => unsubscribeProfile();
       } else {
         setProfile(null);
         setLoading(false);
+        if (unsubscribeProfile) unsubscribeProfile();
       }
     });
 
-    return () => unsubscribeAuth();
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeProfile) unsubscribeProfile();
+    };
   }, []);
 
   if (loading) {

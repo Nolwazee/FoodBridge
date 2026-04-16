@@ -2,17 +2,20 @@ import { FoodListing } from '@/src/types';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Calendar, MapPin, Package, Clock } from 'lucide-react';
+import { Calendar, MapPin, Package, Clock, Trash2, Flag } from 'lucide-react';
 import { format } from 'date-fns';
 
 interface ListingCardProps {
   listing: FoodListing;
   onClaim?: (id: string) => void;
+  onDelete?: (id: string) => void;
+  onReport?: (id: string) => void;
   canClaim?: boolean;
-  key?: string;
+  canDelete?: boolean;
+  canReport?: boolean;
 }
 
-export default function ListingCard({ listing, onClaim, canClaim }: ListingCardProps) {
+export default function ListingCard({ listing, onClaim, onDelete, onReport, canClaim, canDelete, canReport }: ListingCardProps) {
   const isExpired = listing.expiryDate?.toDate ? listing.expiryDate.toDate() < new Date() : false;
   
   return (
@@ -22,9 +25,21 @@ export default function ListingCard({ listing, onClaim, canClaim }: ListingCardP
           <Badge variant={listing.status === 'available' ? 'default' : 'secondary'} className={listing.status === 'available' ? 'bg-emerald-600' : ''}>
             {listing.status.toUpperCase()}
           </Badge>
-          <Badge variant="outline" className="capitalize">
-            {listing.category}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="capitalize">
+              {listing.category}
+            </Badge>
+            {canDelete && (
+              <Button variant="ghost" size="icon" className="h-6 w-6 text-red-400 hover:text-red-600 hover:bg-red-50 -mr-2" onClick={() => onDelete?.(listing.id)}>
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            )}
+            {canReport && (
+              <Button variant="ghost" size="icon" className="h-6 w-6 text-amber-400 hover:text-amber-600 hover:bg-amber-50 -mr-2" onClick={() => onReport?.(listing.id)}>
+                <Flag className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
         </div>
         <CardTitle className="text-xl font-bold text-emerald-900 mt-2">{listing.title}</CardTitle>
       </CardHeader>
