@@ -5,11 +5,12 @@ import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { UserProfile } from '@/src/types';
 import Navbar from './components/Navbar';
 import Hero from './components/Hero';
-import Dashboard from './components/Dashboard';
 import AdminDashboard from './components/AdminDashboard';
 import Onboarding from './components/Onboarding';
 import AuthModal from './components/AuthModal';
 import { Toaster } from '@/components/ui/sonner';
+import RetailPortal from './components/retail/RetailPortal';
+import NgoPortal from './components/ngo/NgoPortal';
 
 export default function App() {
   const [user, setUser] = useState<any>(null);
@@ -72,7 +73,11 @@ export default function App() {
       return <Onboarding profile={profile} onComplete={() => {}} />;
     }
 
-    return <Dashboard profile={profile} />;
+    if (profile.role === 'donor') {
+      return <RetailPortal profile={profile} />;
+    }
+
+    return <NgoPortal profile={profile} />;
   };
 
   return (

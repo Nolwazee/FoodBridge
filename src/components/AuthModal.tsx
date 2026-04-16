@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type FormEvent } from 'react';
 import { auth, db, handleFirestoreError, OperationType } from '@/src/lib/firebase';
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
@@ -27,7 +27,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
   const [loading, setLoading] = useState(false);
   const [role, setRole] = useState<UserRole>('donor');
 
-  const handleAuth = async (e: React.FormEvent) => {
+  const handleAuth = async (e: FormEvent) => {
     e.preventDefault();
     
     if (isLogin) {
@@ -54,17 +54,19 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
         const userDoc = await getDoc(doc(db, 'users', result.user.uid));
         
         if (!userDoc.exists()) {
-           const profileData = {
-              uid: result.user.uid,
-              email: result.user.email,
-              displayName: result.user.email?.split('@')[0] || '',
-              role: 'donor',
-              organizationName: '',
-              isVerified: false,
-              verificationStatus: 'pending',
-              createdAt: serverTimestamp()
-            };
-            await setDoc(doc(db, 'users', result.user.uid), profileData);
+          // Corporate-safe default: never auto-assign admin on login.
+          // Admin users must be explicitly created/assigned in Firestore by an existing admin.
+          const profileData = {
+            uid: result.user.uid,
+            email: result.user.email,
+            displayName: result.user.email?.split('@')[0] || '',
+            role: 'donor' as const,
+            organizationName: '',
+            isVerified: false,
+            verificationStatus: 'pending' as const,
+            createdAt: serverTimestamp()
+          };
+          await setDoc(doc(db, 'users', result.user.uid), profileData);
         }
       } else {
         const result = await createUserWithEmailAndPassword(auth, email, password);
@@ -104,6 +106,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
       resetForm();
     } catch (error: any) {
       console.error("Auth error:", error);
+      
       toast.error(error.message || "Authentication failed. Please try again.");
     } finally {
       setLoading(false);

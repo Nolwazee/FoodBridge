@@ -11,7 +11,11 @@ import {
   FileText,
   Search,
   CheckCircle2,
-  Leaf
+  Leaf,
+  Calendar,
+  MapPinned,
+  BarChart3,
+  ClipboardList
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -26,6 +30,8 @@ export default function Sidebar({ role, activeTab, onTabChange }: SidebarProps) 
       { id: 'overview', label: 'Overview', icon: LayoutDashboard },
       { id: 'verification', label: 'NGO Verification', icon: ShieldCheck },
       { id: 'users', label: 'User Management', icon: Users },
+      { id: 'donations', label: 'All Donations', icon: Package },
+      { id: 'reports', label: 'Reports', icon: BarChart3 },
       { id: 'flagged', label: 'Flagged Activity', icon: AlertTriangle },
       { id: 'audit', label: 'Audit Logs', icon: FileText },
       { id: 'settings', label: 'Settings', icon: Settings },
@@ -33,16 +39,19 @@ export default function Sidebar({ role, activeTab, onTabChange }: SidebarProps) 
     donor: [
       { id: 'overview', label: 'Overview', icon: LayoutDashboard },
       { id: 'my-listings', label: 'My Listings', icon: Package },
-      { id: 'transactions', label: 'Transactions', icon: History },
-      { id: 'ratings', label: 'Ratings', icon: Star },
+      { id: 'requests', label: 'NGO Requests', icon: ClipboardList },
+      { id: 'pickup-schedule', label: 'Pickup Schedule', icon: Calendar },
+      { id: 'history', label: 'Donation History', icon: History },
       { id: 'settings', label: 'Settings', icon: Settings },
     ],
     ngo: [
       { id: 'overview', label: 'Overview', icon: LayoutDashboard },
       { id: 'browse', label: 'Browse Food', icon: Search },
-      { id: 'my-claims', label: 'My Claims', icon: History },
-      { id: 'verification', label: 'Verification', icon: CheckCircle2 },
-      { id: 'ratings', label: 'Ratings', icon: Star },
+      { id: 'my-requests', label: 'My Requests', icon: History },
+      { id: 'directions', label: 'Pickup Directions', icon: MapPinned },
+      { id: 'profile', label: 'NGO Profile', icon: Users },
+      { id: 'documents', label: 'Document Manager', icon: FileText },
+      { id: 'verification', label: 'Verification Status', icon: CheckCircle2 },
       { id: 'settings', label: 'Settings', icon: Settings },
     ]
   };

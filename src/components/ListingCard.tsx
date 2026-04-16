@@ -1,8 +1,9 @@
+import type { FC } from 'react';
 import { FoodListing } from '@/src/types';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Calendar, MapPin, Package, Clock, Trash2, Flag } from 'lucide-react';
+import { MapPin, Package, Clock, Trash2, Flag } from 'lucide-react';
 import { format } from 'date-fns';
 
 interface ListingCardProps {
@@ -15,11 +16,27 @@ interface ListingCardProps {
   canReport?: boolean;
 }
 
-export default function ListingCard({ listing, onClaim, onDelete, onReport, canClaim, canDelete, canReport }: ListingCardProps) {
-  const isExpired = listing.expiryDate?.toDate ? listing.expiryDate.toDate() < new Date() : false;
+const ListingCard: FC<ListingCardProps> = ({ listing, onClaim, onDelete, onReport, canClaim, canDelete, canReport }) => {
+  const expiryDate: Date | null =
+    listing.expiryDate?.toDate ? listing.expiryDate.toDate() :
+    listing.expiryDate instanceof Date ? listing.expiryDate :
+    typeof listing.expiryDate === 'string' ? new Date(listing.expiryDate) :
+    null;
+  const isExpired = expiryDate ? expiryDate < new Date() : false;
   
   return (
     <Card className="overflow-hidden border-emerald-100 hover:shadow-lg transition-shadow duration-300">
+      {listing.photoUrl && (
+        <div className="h-36 w-full bg-gray-100">
+          <img
+            src={listing.photoUrl}
+            alt={listing.title}
+            className="h-full w-full object-cover"
+            loading="lazy"
+            referrerPolicy="no-referrer"
+          />
+        </div>
+      )}
       <CardHeader className="bg-emerald-50/50 pb-4">
         <div className="flex justify-between items-start">
           <Badge variant={listing.status === 'available' ? 'default' : 'secondary'} className={listing.status === 'available' ? 'bg-emerald-600' : ''}>
@@ -54,7 +71,7 @@ export default function ListingCard({ listing, onClaim, onDelete, onReport, canC
         </div>
         <div className="flex items-center text-sm text-gray-600 gap-2">
           <Clock className="h-4 w-4 text-emerald-600" />
-          <span>Expires: {listing.expiryDate?.toDate ? format(listing.expiryDate.toDate(), 'PPP') : 'N/A'}</span>
+          <span>Expires: {expiryDate ? format(expiryDate, 'PPP') : 'N/A'}</span>
         </div>
         <p className="text-sm text-gray-500 line-clamp-2 mt-2 italic">
           "{listing.description}"
@@ -66,6 +83,7 @@ export default function ListingCard({ listing, onClaim, onDelete, onReport, canC
           <Button 
             onClick={() => onClaim?.(listing.id)} 
             className="bg-emerald-600 hover:bg-emerald-700 text-white size-sm"
+            disabled={isExpired}
           >
             Claim
           </Button>
@@ -73,4 +91,6 @@ export default function ListingCard({ listing, onClaim, onDelete, onReport, canC
       </CardFooter>
     </Card>
   );
-}
+};
+
+export default ListingCard;

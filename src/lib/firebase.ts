@@ -1,11 +1,13 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app, 'ai-studio-fb99691f-7c2e-4d4d-ae39-dc666716d252');
+export const storage = getStorage(app);
 
 export enum OperationType {
   CREATE = 'create',
