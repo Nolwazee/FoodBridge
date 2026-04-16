@@ -68,16 +68,35 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
         }
       } else {
         const result = await createUserWithEmailAndPassword(auth, email, password);
-        const profileData = {
-          uid: result.user.uid,
-          email: result.user.email,
-          displayName: fullName,
-          role,
-          organizationName: fullName, // Optional mapping
-          isVerified: false,
-          verificationStatus: 'pending',
-          createdAt: serverTimestamp()
-        };
+        
+        let profileData: any;
+        
+        // Admin Seeding Check
+        if (result.user.email === 'admin@foodbridge.com' || result.user.email === 'admin@foodbrigde.com') {
+           profileData = {
+            uid: result.user.uid,
+            email: result.user.email,
+            displayName: fullName || 'System Administrator',
+            role: 'admin',
+            organizationName: 'FoodBridge Administration',
+            isVerified: true,
+            verificationStatus: 'verified',
+            onboardingCompleted: true,
+            createdAt: serverTimestamp()
+          };
+        } else {
+          profileData = {
+            uid: result.user.uid,
+            email: result.user.email,
+            displayName: fullName,
+            role,
+            organizationName: fullName, // Optional mapping
+            isVerified: false,
+            verificationStatus: 'pending',
+            createdAt: serverTimestamp()
+          };
+        }
+        
         await setDoc(doc(db, 'users', result.user.uid), profileData);
       }
 
