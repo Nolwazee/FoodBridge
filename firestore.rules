@@ -1,0 +1,113 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - uid: string (required)
+    //   - email: string (required, email format)
+    //   - displayName: string
+    //   - role: string (donor, ngo, admin)
+    //   - organizationName: string
+    //   - isVerified: bool
+    //   - verificationStatus: string (pending, verified, rejected)
+    //   - createdAt: timestamp
+    //
+    // Collection: listings
+    // Document ID: {listingId}
+    // Fields:
+    //   - donorId: string (required)
+    //   - donorName: string
+    //   - title: string (required)
+    //   - description: string
+    //   - category: string
+    //   - quantity: string (required)
+    //   - expiryDate: timestamp
+    //   - location: string
+    //   - status: string (available, claimed, collected)
+    //   - claimedBy: string
+    //   - claimedAt: timestamp
+    //   - createdAt: timestamp
+    //
+    // Collection: verifications
+    // Document ID: {requestId}
+    // Fields:
+    //   - ngoId: string (required)
+    //   - ngoName: string
+    //   - registrationNumber: string (required)
+    //   - status: string (pending, approved, rejected)
+    //   - createdAt: timestamp
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         request.auth.token.email == "nomfundomanyoni2003@gmail.com");
+    }
+
+    function isVerifiedNGO() {
+      return isAuthenticated() && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ngo' &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isVerified == true;
+    }
+
+    function isDonor() {
+      return isAuthenticated() && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'donor';
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isOwner(userId) && 
+                      request.resource.data.role in ['donor', 'ngo'] &&
+                      request.resource.data.isVerified == false &&
+                      request.resource.data.verificationStatus == 'pending';
+      allow update: if (isOwner(userId) && 
+                        request.resource.data.role == resource.data.role &&
+                        request.resource.data.isVerified == resource.data.isVerified &&
+                        request.resource.data.verificationStatus == resource.data.verificationStatus) || 
+                      isAdmin();
+    }
+
+    match /listings/{listingId} {
+      allow read: if isAuthenticated();
+      allow create: if isDonor() && request.resource.data.donorId == request.auth.uid;
+      allow update: if (isDonor() && resource.data.donorId == request.auth.uid) ||
+                      (isVerifiedNGO() && 
+                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'claimedBy', 'claimedAt']) &&
+                       request.resource.data.status == 'claimed' &&
+                       resource.data.status == 'available') ||
+                      isAdmin();
+      allow delete: if (isDonor() && resource.data.donorId == request.auth.uid) || isAdmin();
+    }
+
+    match /verifications/{requestId} {
+      allow read: if isOwner(resource.data.ngoId) || isAdmin();
+      allow create: if isAuthenticated() && request.resource.data.ngoId == request.auth.uid;
+      allow update: if isAdmin();
+    }
+  }
+}

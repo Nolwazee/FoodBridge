@@ -1,0 +1,70 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["donor", "ngo", "admin"] },
+        "organizationName": { "type": "string" },
+        "isVerified": { "type": "boolean" },
+        "verificationStatus": { "type": "string", "enum": ["pending", "verified", "rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "FoodListing": {
+      "title": "Food Listing",
+      "description": "Surplus food listed by donors",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "donorId": { "type": "string" },
+        "donorName": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "category": { "type": "string", "enum": ["produce", "bakery", "dairy", "meat", "pantry", "prepared"] },
+        "quantity": { "type": "string" },
+        "expiryDate": { "type": "string", "format": "date-time" },
+        "location": { "type": "string" },
+        "status": { "type": "string", "enum": ["available", "claimed", "collected"] },
+        "claimedBy": { "type": "string" },
+        "claimedAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["donorId", "title", "quantity", "status"]
+    },
+    "VerificationRequest": {
+      "title": "Verification Request",
+      "description": "NGO verification application",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "ngoId": { "type": "string" },
+        "ngoName": { "type": "string" },
+        "registrationNumber": { "type": "string" },
+        "documents": { "type": "array", "items": { "type": "string" } },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ngoId", "registrationNumber", "status"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/listings/{listingId}": {
+      "schema": "FoodListing",
+      "description": "Food donation listings"
+    },
+    "/verifications/{requestId}": {
+      "schema": "VerificationRequest",
+      "description": "NGO verification requests"
+    }
+  }
+}
