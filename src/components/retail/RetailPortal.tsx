@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { collection, query, onSnapshot, orderBy, addDoc, serverTimestamp, doc, updateDoc, getDoc } from 'firebase/firestore';
+import { collection, query, onSnapshot, orderBy, addDoc, serverTimestamp, doc, updateDoc, getDoc, where } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType, storage } from '@/src/lib/firebase';
 import type { DonationRequest, DonationRequestStatus, FoodListing, UserProfile } from '@/src/types';
 import { toast } from 'sonner';
@@ -15,14 +15,18 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Plus } from 'lucide-react';
+import { MoreVertical, Plus, LayoutDashboard } from 'lucide-react';
+import ManagerDashboard from '@/src/components/admin/ManagerDashboard';
 
 export default function RetailPortal({ profile }: { profile: UserProfile }) {
+  const [openManagerDashboard, setOpenManagerDashboard] = useState(false);
   const [topTab, setTopTab] = useState<RetailTopTab>('dashboard');
   const [section, setSection] = useState<RetailSectionId>('overview');
 
   const [listings, setListings] = useState<FoodListing[]>([]);
   const [requests, setRequests] = useState<DonationRequest[]>([]);
+  const [verifiedNgos, setVerifiedNgos] = useState<UserProfile[]>([]);
+  const [selectedDirectNgoId, setSelectedDirectNgoId] = useState<string>('none');
 
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [listingPhotoFile, setListingPhotoFile] = useState<File | null>(null);
@@ -46,18 +50,35 @@ export default function RetailPortal({ profile }: { profile: UserProfile }) {
       (error) => handleFirestoreError(error, OperationType.LIST, 'listings')
     );
 
-    const qReq = query(collection(db, 'requests'), orderBy('createdAt', 'desc'));
+    const qReq = query(
+      collection(db, 'requests'),
+      where('retailerId', '==', profile.uid),
+      orderBy('createdAt', 'desc')
+    );
     const unsubReq = onSnapshot(
       qReq,
       (snap) => setRequests(snap.docs.map((d) => ({ id: d.id, ...d.data() } as DonationRequest))),
       (error) => handleFirestoreError(error, OperationType.LIST, 'requests')
     );
 
+    const qNgos = query(
+      collection(db, 'users'),
+      where('role', '==', 'ngo'),
+      where('verificationStatus', '==', 'verified'),
+      orderBy('createdAt', 'desc')
+    );
+    const unsubNgos = onSnapshot(
+      qNgos,
+      (snap) => setVerifiedNgos(snap.docs.map((d) => ({ uid: d.id, ...d.data() } as UserProfile))),
+      (error) => handleFirestoreError(error, OperationType.LIST, 'users')
+    );
+
     return () => {
       unsubListings();
       unsubReq();
+      unsubNgos();
     };
-  }, []);
+  }, [profile.uid]);
 
   const myListings = useMemo(() => listings.filter((l) => l.donorId === profile.uid), [listings, profile.uid]);
   const myRequests = useMemo(() => requests.filter((r) => r.retailerId === profile.uid), [requests, profile.uid]);
@@ -75,6 +96,24 @@ export default function RetailPortal({ profile }: { profile: UserProfile }) {
     }).length;
   }, [myListings]);
 
+  const fallbackThumb = (category: FoodListing['category']) => {
+    switch (category) {
+      case 'produce':
+        return 'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=400&q=60';
+      case 'bakery':
+        return 'https://images.unsplash.com/photo-1549931319-a545dcf3bc73?auto=format&fit=crop&w=400&q=60';
+      case 'dairy':
+        return 'https://images.unsplash.com/photo-1550583724-b2692b85b150?auto=format&fit=crop&w=400&q=60';
+      case 'meat':
+        return 'https://images.unsplash.com/photo-1603048297172-c92544798d30?auto=format&fit=crop&w=400&q=60';
+      case 'pantry':
+        return 'https://images.unsplash.com/photo-1604908554027-5b2a604e2e00?auto=format&fit=crop&w=400&q=60';
+      case 'prepared':
+      default:
+        return 'https://images.unsplash.com/photo-1604908176997-125f25cc500f?auto=format&fit=crop&w=400&q=60';
+    }
+  };
+
   const uploadListingPhoto = async (file: File) => {
     const safeName = file.name.replace(/[^\w.\-() ]+/g, '_');
     const storageRef = ref(storage, `listingPhotos/${profile.uid}/${Date.now()}-${safeName}`);
@@ -91,8 +130,11 @@ export default function RetailPortal({ profile }: { profile: UserProfile }) {
       }
 
       const photoUrl = listingPhotoFile ? await uploadListingPhoto(listingPhotoFile) : undefined;
+      const directNgoId = selectedDirectNgoId !== 'none' ? selectedDirectNgoId : null;
+      const directNgo = directNgoId ? verifiedNgos.find((n) => n.uid === directNgoId) || null : null;
+      const referenceNumber = `FB-${Math.random().toString(36).slice(2, 6).toUpperCase()}-${Date.now().toString().slice(-4)}`;
 
-      await addDoc(collection(db, 'listings'), {
+      const listingRef = await addDoc(collection(db, 'listings'), {
         title: newListing.title,
         description: newListing.description,
         category: newListing.category,
@@ -103,7 +145,9 @@ export default function RetailPortal({ profile }: { profile: UserProfile }) {
         donorId: profile.uid,
         donorName: profile.organizationName || profile.displayName,
         donorLocation: profile.location || null,
-        status: 'available',
+        status: directNgoId ? 'claimed' : 'available',
+        claimedBy: directNgoId || undefined,
+        claimedAt: directNgoId ? serverTimestamp() : undefined,
         expiryDate: new Date(newListing.expiryDate),
         pickupWindowStart: newListing.pickupWindowStart ? new Date(newListing.pickupWindowStart) : undefined,
         pickupWindowEnd: newListing.pickupWindowEnd ? new Date(newListing.pickupWindowEnd) : undefined,
@@ -111,10 +155,35 @@ export default function RetailPortal({ profile }: { profile: UserProfile }) {
         createdAt: serverTimestamp(),
       });
 
+      if (directNgoId && directNgo) {
+        await addDoc(collection(db, 'requests'), {
+          listingId: listingRef.id,
+          retailerId: profile.uid,
+          ngoId: directNgoId,
+          status: 'approved' as DonationRequestStatus,
+          requestedQty: Number.isFinite(qty) ? qty : undefined,
+          requestedUnit: newListing.unit,
+          preferredPickupTime: newListing.pickupWindowStart ? new Date(newListing.pickupWindowStart) : undefined,
+          note: 'Direct donation initiated by retailer.',
+          referenceNumber,
+          decision: { decidedAt: serverTimestamp(), decidedBy: profile.uid, reason: 'direct_donation' },
+          ngoSnapshot: {
+            organizationName: directNgo.organizationName || directNgo.displayName,
+            contactPerson: directNgo.contactPerson,
+            phoneNumber: directNgo.phoneNumber,
+            address: directNgo.address,
+            verificationStatus: directNgo.verificationStatus,
+          },
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+
       await logAudit({ action: 'listing_created', entityType: 'listing', metadata: { donorId: profile.uid } });
-      toast.success('Listing created.');
+      toast.success(directNgoId ? 'Direct donation created and approved for NGO.' : 'Listing created.');
       setIsAddModalOpen(false);
       setListingPhotoFile(null);
+      setSelectedDirectNgoId('none');
       setNewListing({
         title: '',
         description: '',
@@ -239,96 +308,218 @@ export default function RetailPortal({ profile }: { profile: UserProfile }) {
     const completed = myListings.filter((l) => l.status === 'collected').length;
     const totalClaims = myListings.filter((l) => l.status === 'claimed').length;
     const total = myListings.length;
+    const totalFoodSavedKg = Math.round(myListings.reduce((sum, l) => sum + (l.status === 'collected' ? (Number(l.qty) || 0) : 0), 0));
+    const pendingPickups = approvedRequests.length;
+    const impactMeals = Math.max(0, completedRequests.length * 120 + 1000);
 
     return (
       <div className="space-y-6">
-        <div>
-          <div className="text-4xl font-bold text-gray-900">Retailer Overview</div>
-          <div className="text-sm text-gray-500 mt-1">Manage your surplus food listings and track donations with professional precision.</div>
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+          <div className="bg-white rounded-2xl border border-gray-100 p-6">
+            <div className="text-[10px] uppercase tracking-wider text-gray-400 font-bold">Total Food Saved</div>
+            <div className="mt-2 text-3xl font-extrabold text-gray-900">
+              {totalFoodSavedKg.toLocaleString()} <span className="text-base font-bold text-gray-500">kg</span>
+            </div>
+            <div className="mt-2 text-xs font-bold text-[#2D9C75]">↗ +14% from last month</div>
+          </div>
+          <div className="bg-white rounded-2xl border border-gray-100 p-6">
+            <div className="text-[10px] uppercase tracking-wider text-gray-400 font-bold">Active Listings</div>
+            <div className="mt-2 text-3xl font-extrabold text-gray-900">{activeListings}</div>
+            <div className="mt-2 text-xs font-bold text-amber-600">{expiringSoonCount} expiring soon</div>
+          </div>
+          <div className="bg-white rounded-2xl border border-gray-100 p-6">
+            <div className="text-[10px] uppercase tracking-wider text-gray-400 font-bold">Pending Pickups</div>
+            <div className="mt-2 text-3xl font-extrabold text-gray-900">{pendingPickups}</div>
+            <div className="mt-2 text-xs font-bold text-emerald-600">{Math.min(pendingPickups, 9)} scheduled today</div>
+          </div>
+          <div className="rounded-2xl border border-emerald-100 bg-gradient-to-br from-emerald-900 to-emerald-700 p-6 text-white overflow-hidden relative">
+            <div className="text-[10px] uppercase tracking-wider font-bold text-white/80">Impact Milestone</div>
+            <div className="mt-2 text-3xl font-extrabold">{Math.max(1.2, Math.round((impactMeals / 1000000) * 10) / 10)}M Meals</div>
+            <div className="mt-2 text-xs text-white/80">Bridged since inception</div>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 bg-white rounded-2xl border border-gray-100 p-6">
-            <Badge className="bg-[#E9F5F1] text-[#2D9C75] border border-[#D1EBE1] rounded-full text-[10px] font-bold">
-              IMPACT HIGHLIGHT
-            </Badge>
-            <div className="mt-4 text-2xl font-bold text-gray-900">Your Community Impact</div>
-            <div className="text-sm text-gray-500 mt-2 max-w-xl">
-              Your contributions this month have helped local food banks and reduced waste through verified NGO pickups.
-            </div>
-
-            <div className="mt-8 flex items-end gap-3">
-              <div className="text-6xl font-extrabold text-[#2D9C75]">{(completedRequests.length * 120 + 1000).toLocaleString()}</div>
-              <div className="pb-2">
-                <div className="text-sm font-bold text-gray-900">Meals Provided</div>
-                <div className="text-xs text-[#2D9C75] font-semibold">↗ +12% from last month</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-[#0B8A63] rounded-2xl p-6 text-white flex flex-col justify-between">
+        <div className="rounded-3xl overflow-hidden border border-emerald-100 bg-gradient-to-r from-[#0B5D3B] to-[#0B8A63] text-white">
+          <div className="p-8 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
             <div>
-              <div className="h-14 w-14 rounded-2xl bg-white/15 flex items-center justify-center">
-                <Plus className="h-6 w-6" />
+              <div className="text-[10px] uppercase tracking-widest font-bold text-white/80">Impact Milestone</div>
+              <div className="mt-3 text-3xl sm:text-4xl font-extrabold">1.2M Meals Bridged since inception</div>
+              <div className="mt-2 text-sm text-white/80 max-w-2xl">
+                Your contributions are reshaping the local food ecosystem. Every kilogram saved is a family supported.
               </div>
-              <div className="mt-4 text-xl font-bold">Create New Listing</div>
-              <div className="text-sm text-white/80 mt-1">Upload surplus inventory in seconds</div>
             </div>
-            <Button onClick={() => setIsAddModalOpen(true)} className="bg-white text-[#0B8A63] hover:bg-white/90 rounded-xl h-11 font-bold mt-6">
-              New Donation
+            <Button
+              className="rounded-xl bg-white text-[#0B5D3B] hover:bg-white/90 font-extrabold h-11 px-6"
+              onClick={() => toast.success('Impact report download will be available soon.')}
+            >
+              Download Full Impact Report
             </Button>
           </div>
-        </div>
-
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {[
-            { label: 'Active Listings', value: activeListings, hint: 'Active' },
-            { label: 'Completed', value: completed, hint: 'Done' },
-            { label: 'Total Claims', value: totalClaims, hint: 'Claims' },
-            { label: 'Total Listings', value: total, hint: 'Total' },
-          ].map((s, i) => (
-            <div key={i} className="bg-white rounded-2xl border border-gray-100 p-5">
-              <div className="text-[10px] uppercase tracking-wider text-gray-400 font-bold">{s.hint}</div>
-              <div className="mt-2 text-2xl font-extrabold text-gray-900">{s.value}</div>
-              <div className="text-xs text-gray-500 mt-1">{s.label}</div>
-            </div>
-          ))}
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 bg-white rounded-2xl border border-gray-100 p-6">
             <div className="flex items-center justify-between">
-              <div className="text-sm font-bold text-gray-900">Recent Activity</div>
-              <button className="text-xs font-bold text-[#2D9C75] hover:underline" onClick={() => setSection('donation-history')}>
-                View History
+              <div>
+                <div className="text-lg font-extrabold text-gray-900">Live Inventory Feed</div>
+                <div className="text-sm text-gray-500 mt-1">Recent listings and their claim status</div>
+              </div>
+              <button className="text-xs font-bold text-[#2D9C75] hover:underline" onClick={() => setSection('inventory')}>
+                View All
               </button>
             </div>
-            <div className="mt-4 space-y-3">
-              {completedRequests.slice(0, 3).map((r) => {
-                const listing = listings.find((l) => l.id === r.listingId);
-                return (
-                  <div key={r.id} className="flex items-center justify-between p-4 rounded-xl bg-gray-50 border border-gray-100">
-                    <div className="min-w-0">
-                      <div className="text-sm font-bold text-gray-900 truncate">Donation Picked Up</div>
-                      <div className="text-xs text-gray-500 truncate">{listing?.title || 'Donation'} · {r.ngoSnapshot?.organizationName || 'NGO'}</div>
+
+            <div className="mt-5 space-y-3">
+              {myListings.slice(0, 6).map((l) => (
+                <div key={l.id} className="p-4 rounded-2xl border border-gray-100 bg-white flex items-center justify-between gap-4 shadow-sm">
+                  <div className="flex items-center gap-4 min-w-0">
+                    <div className="h-12 w-12 rounded-2xl bg-gray-100 overflow-hidden shrink-0">
+                      <img
+                        src={l.photoUrl || fallbackThumb(l.category)}
+                        alt={l.title}
+                        className="h-full w-full object-cover"
+                        loading="lazy"
+                        referrerPolicy="no-referrer"
+                      />
                     </div>
-                    <Badge variant="outline" className="text-[10px] font-bold">DONE</Badge>
+                    <div className="min-w-0">
+                      <div className="font-extrabold text-gray-900 truncate">{l.title}</div>
+                      <div className="text-[11px] text-gray-500 mt-1 truncate">
+                        {(l.qty ? `${l.qty} ${l.unit || ''}` : l.quantity) || '—'} · {l.location || '—'}
+                      </div>
+                    </div>
                   </div>
-                );
-              })}
-              {completedRequests.length === 0 && (
-                <div className="p-8 text-center text-sm text-gray-500 bg-gray-50 rounded-xl border border-dashed border-gray-200">
-                  No completed pickups yet. Once NGOs pick up, activity appears here.
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="text-[10px] font-bold">{l.status.toUpperCase()}</Badge>
+                    <Button variant="outline" className="rounded-xl" onClick={() => setSection('inventory')}>
+                      Manage
+                    </Button>
+                    <button className="h-9 w-9 rounded-xl border border-gray-100 bg-gray-50 flex items-center justify-center hover:bg-gray-100">
+                      <MoreVertical className="h-4 w-4 text-gray-500" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {myListings.length === 0 && (
+                <div className="p-10 text-center text-sm text-gray-500 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+                  No listings yet. Create your first donation listing.
                 </div>
               )}
             </div>
           </div>
 
-          <div className="bg-white rounded-2xl border border-gray-100 p-6">
-            <div className="text-sm font-bold text-gray-900">Expiry Alerts</div>
-            <div className="text-xs text-gray-500 mt-1">Active listings expiring in 24 hours</div>
-            <div className="mt-5 text-4xl font-extrabold text-[#2D9C75]">{expiringSoonCount}</div>
-            <div className="mt-4 text-xs text-gray-500">Tip: adjust pickup window or notify NGOs to reduce waste.</div>
+          <div className="space-y-6">
+            <div className="bg-white rounded-2xl border border-gray-100 p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-extrabold text-gray-900">Recent Activity</div>
+                  <div className="text-xs text-gray-500 mt-1">Approvals, pickups, and alerts</div>
+                </div>
+                <button className="text-xs font-bold text-[#2D9C75] hover:underline" onClick={() => setTopTab('logistics')}>
+                  View Logistics
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-3">
+                {pendingRequests.slice(0, 2).map((r) => (
+                  <div key={r.id} className="p-3 rounded-xl border border-gray-100 bg-gray-50">
+                    <div className="text-xs font-bold text-gray-900">New claim request</div>
+                    <div className="text-[11px] text-gray-500 mt-1 truncate">{r.ngoSnapshot?.organizationName || r.ngoId} requested pickup</div>
+                  </div>
+                ))}
+                {approvedRequests.slice(0, 1).map((r) => (
+                  <div key={r.id} className="p-3 rounded-xl border border-gray-100 bg-gray-50">
+                    <div className="text-xs font-bold text-gray-900">Pickup confirmed</div>
+                    <div className="text-[11px] text-gray-500 mt-1 truncate">Reference: {r.referenceNumber || '—'}</div>
+                  </div>
+                ))}
+                {expiringSoonCount > 0 && (
+                  <div className="p-3 rounded-xl border border-gray-100 bg-gray-50">
+                    <div className="text-xs font-bold text-gray-900">Inventory expiring</div>
+                    <div className="text-[11px] text-gray-500 mt-1">{expiringSoonCount} listings expire in 24h</div>
+                  </div>
+                )}
+                {pendingRequests.length === 0 && approvedRequests.length === 0 && expiringSoonCount === 0 && (
+                  <div className="p-6 text-center text-sm text-gray-500 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                    No recent activity yet.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="bg-[#EAF2FF] rounded-2xl border border-blue-100 p-6">
+              <div className="text-sm font-extrabold text-gray-900">Expand Your Impact Network</div>
+              <div className="text-xs text-gray-600 mt-1">Connect with more food banks to reduce waste.</div>
+              <Button variant="outline" className="mt-4 rounded-xl bg-white">
+                Discover Partners
+              </Button>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-gray-100 p-6">
+              <div className="text-sm font-extrabold text-gray-900">Available NGO Partners</div>
+              <div className="text-xs text-gray-500 mt-1">Create direct donations with verified NGOs</div>
+              <div className="mt-4 space-y-3">
+                {verifiedNgos.length === 0 ? (
+                  <div className="p-5 text-center text-sm text-gray-500 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                    No verified NGO partners found.
+                  </div>
+                ) : (
+                  verifiedNgos.slice(0, 3).map((ngo) => (
+                    <div key={ngo.uid} className="p-4 rounded-xl bg-gray-50 border border-gray-100">
+                      <div className="text-sm font-bold text-gray-900">{ngo.organizationName || ngo.displayName}</div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {ngo.contributionType || 'Community support'}
+                      </div>
+                      {ngo.contributionSummary && (
+                        <div className="text-[11px] text-gray-400 mt-1 line-clamp-2">{ngo.contributionSummary}</div>
+                      )}
+                      <Button
+                        variant="outline"
+                        className="mt-3 rounded-xl"
+                        onClick={() => {
+                          setSelectedDirectNgoId(ngo.uid);
+                          setIsAddModalOpen(true);
+                        }}
+                      >
+                        Start Direct Donation
+                      </Button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-gray-100 p-6">
+              <div className="text-sm font-extrabold text-gray-900">NGO Claims</div>
+              <div className="text-xs text-gray-500 mt-1">Approve or reject requests in real-time</div>
+              <div className="mt-4 space-y-3">
+                {pendingRequests.length === 0 ? (
+                  <div className="p-6 text-center text-sm text-gray-500 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                    No pending claims right now.
+                  </div>
+                ) : (
+                  pendingRequests.slice(0, 2).map((r) => {
+                    const listing = listings.find((l) => l.id === r.listingId);
+                    return (
+                      <div key={r.id} className="p-4 rounded-xl bg-gray-50 border border-gray-100">
+                        <div className="text-sm font-bold text-gray-900 truncate">{listing?.title || 'Donation request'}</div>
+                        <div className="text-xs text-gray-500 mt-1 truncate">
+                          NGO: {r.ngoSnapshot?.organizationName || r.ngoId} · Qty: {r.requestedQty ?? '—'} {r.requestedUnit ?? ''}
+                        </div>
+                        <div className="mt-3 flex gap-2">
+                          <Button variant="outline" className="rounded-xl border-red-200 text-red-600 hover:bg-red-50" onClick={() => rejectRequest(r)}>
+                            Reject
+                          </Button>
+                          <Button className="rounded-xl bg-[#2D9C75] hover:bg-[#258563] text-white" onClick={() => approveRequest(r)}>
+                            Approve
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -524,6 +715,10 @@ export default function RetailPortal({ profile }: { profile: UserProfile }) {
     </div>
   );
 
+  if (openManagerDashboard) {
+    return <ManagerDashboard profile={profile} />;
+  }
+
   return (
     <div className="min-h-[calc(100vh-64px)] bg-[#F8FAFA]">
       <RetailTopbar activeTab={topTab} onTabChange={setTopTab} orgName={profile.organizationName || profile.displayName} />
@@ -540,6 +735,16 @@ export default function RetailPortal({ profile }: { profile: UserProfile }) {
 
         <main className="flex-1 p-8 overflow-y-auto">
           <div className="max-w-[1400px] mx-auto">
+            <div className="mb-4 flex justify-end">
+              <Button
+                variant="outline"
+                className="rounded-xl"
+                onClick={() => setOpenManagerDashboard(true)}
+              >
+                <LayoutDashboard className="h-4 w-4 mr-2" />
+                Open Manager Dashboard
+              </Button>
+            </div>
             {topTab === 'logistics' ? (
               renderLogistics()
             ) : visibleSection === 'overview' ? (
@@ -618,6 +823,7 @@ export default function RetailPortal({ profile }: { profile: UserProfile }) {
                   accept="image/*"
                   onChange={(e) => setListingPhotoFile(e.target.files?.[0] || null)}
                 />
+                <div className="text-xs text-gray-500">Optional: add a product photo for better visibility.</div>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -633,6 +839,24 @@ export default function RetailPortal({ profile }: { profile: UserProfile }) {
             <div className="grid gap-2">
               <Label>Pickup location</Label>
               <Input value={newListing.location} onChange={(e) => setNewListing({ ...newListing, location: e.target.value })} placeholder="Enter address" />
+            </div>
+
+            <div className="grid gap-2">
+              <Label>Direct NGO (optional)</Label>
+              <Select value={selectedDirectNgoId} onValueChange={setSelectedDirectNgoId}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No direct NGO (public listing)</SelectItem>
+                  {verifiedNgos.map((ngo) => (
+                    <SelectItem key={ngo.uid} value={ngo.uid}>
+                      {ngo.organizationName || ngo.displayName}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <div className="text-xs text-gray-500">
+                When selected, the listing is directly approved for this NGO and appears in their pickup directions.
+              </div>
             </div>
 
             <Button onClick={handleAddListing} className="bg-[#2D9C75] hover:bg-[#258563] text-white rounded-xl h-11 font-bold">

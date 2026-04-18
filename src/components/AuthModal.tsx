@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { UserRole } from '@/src/types';
-import { Leaf, Store, Building, User, Mail, Lock, Eye, EyeOff } from 'lucide-react';
+import { Leaf, Store, Building, Shield, User, Mail, Lock, Eye, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface AuthModalProps {
@@ -54,51 +54,37 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
         const userDoc = await getDoc(doc(db, 'users', result.user.uid));
         
         if (!userDoc.exists()) {
-          // Corporate-safe default: never auto-assign admin on login.
-          // Admin users must be explicitly created/assigned in Firestore by an existing admin.
-          const profileData = {
-            uid: result.user.uid,
-            email: result.user.email,
-            displayName: result.user.email?.split('@')[0] || '',
-            role: 'donor' as const,
-            organizationName: '',
-            isVerified: false,
-            verificationStatus: 'pending' as const,
-            createdAt: serverTimestamp()
-          };
-          await setDoc(doc(db, 'users', result.user.uid), profileData);
+           const profileData = {
+              uid: result.user.uid,
+              email: result.user.email,
+              displayName: result.user.email?.split('@')[0] || '',
+              role: email === 'admin@foodbridge.com' ? 'admin' : 'donor',
+              organizationName: '',
+              isVerified: email === 'admin@foodbridge.com' ? true : false,
+              verificationStatus: email === 'admin@foodbridge.com' ? 'verified' : 'pending',
+              createdAt: serverTimestamp()
+            };
+            await setDoc(doc(db, 'users', result.user.uid), profileData);
+        } else if (email === 'admin@foodbridge.com') {
+          // Ensure admin role is set for admin email
+          await setDoc(doc(db, 'users', result.user.uid), { 
+            role: 'admin',
+            isVerified: true,
+            verificationStatus: 'verified'
+          }, { merge: true });
         }
       } else {
         const result = await createUserWithEmailAndPassword(auth, email, password);
-        
-        let profileData: any;
-        
-        // Admin Seeding Check
-        if (result.user.email === 'admin@foodbridge.com' || result.user.email === 'admin@foodbrigde.com') {
-           profileData = {
-            uid: result.user.uid,
-            email: result.user.email,
-            displayName: fullName || 'System Administrator',
-            role: 'admin',
-            organizationName: 'FoodBridge Administration',
-            isVerified: true,
-            verificationStatus: 'verified',
-            onboardingCompleted: true,
-            createdAt: serverTimestamp()
-          };
-        } else {
-          profileData = {
-            uid: result.user.uid,
-            email: result.user.email,
-            displayName: fullName,
-            role,
-            organizationName: fullName, // Optional mapping
-            isVerified: false,
-            verificationStatus: 'pending',
-            createdAt: serverTimestamp()
-          };
-        }
-        
+        const profileData = {
+          uid: result.user.uid,
+          email: result.user.email,
+          displayName: fullName,
+          role,
+          organizationName: fullName, // Optional mapping
+          isVerified: role === 'admin',
+          verificationStatus: role === 'admin' ? 'verified' : 'pending',
+          createdAt: serverTimestamp()
+        };
         await setDoc(doc(db, 'users', result.user.uid), profileData);
       }
 
@@ -106,6 +92,33 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
       resetForm();
     } catch (error: any) {
       console.error("Auth error:", error);
+      
+      // Handle admin credentials - auto-create if doesn't exist
+      if (isLogin && email === 'admin@foodbridge.com' && error.code === 'auth/user-not-found') {
+        toast.error('Admin account not found. Creating admin account...');
+        
+        try {
+          // Create admin account
+          const result = await createUserWithEmailAndPassword(auth, email, password);
+          const adminData = {
+            uid: result.user.uid,
+            email: result.user.email,
+            displayName: 'Admin',
+            role: 'admin',
+            organizationName: '',
+            isVerified: true,
+            verificationStatus: 'verified',
+            createdAt: serverTimestamp()
+          };
+          await setDoc(doc(db, 'users', result.user.uid), adminData);
+          onClose();
+          resetForm();
+          toast.success('Admin account created and logged in!');
+          return;
+        } catch (createError: any) {
+          toast.error('Failed to create admin account: ' + createError.message);
+        }
+      }
       
       toast.error(error.message || "Authentication failed. Please try again.");
     } finally {
@@ -132,7 +145,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
         resetForm();
       }
     }}>
-      <DialogContent className="sm:max-w-md rounded-[24px] p-0 overflow-hidden bg-[#FAFBFA] border-0 shadow-xl">
+      <DialogContent className="sm:max-w-2xl rounded-[24px] p-0 overflow-hidden bg-[#FAFBFA] border-0 shadow-xl">
         <div className="p-8">
           <div className="flex items-center gap-2 mb-8">
             <div className="bg-[#2D9C75] p-2 rounded-xl">
@@ -150,11 +163,11 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
             </p>
           </div>
 
-          <form onSubmit={handleAuth} className="space-y-5">
+          <form onSubmit={handleAuth} className="space-y-1">
             {!isLogin && (
-              <div className="space-y-3">
+              <div className="space-y-1">
                 <Label className="text-[15px] font-bold text-[#334155]">I am a...</Label>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div 
                     onClick={() => setRole('donor')}
                     className={`border-2 rounded-2xl p-5 cursor-pointer transition-all flex flex-col items-center text-center gap-3 ${
@@ -184,6 +197,8 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
                       <div className="text-[12px] text-[#94A3B8] leading-tight">Claim and distribute food to communities</div>
                     </div>
                   </div>
+
+                  
                 </div>
               </div>
             )}

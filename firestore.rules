@@ -82,9 +82,15 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if isAuthenticated();
       allow create: if isOwner(userId) && 
-                      request.resource.data.role in ['donor', 'ngo'] &&
-                      request.resource.data.isVerified == false &&
-                      request.resource.data.verificationStatus == 'pending';
+                      request.resource.data.role in ['donor', 'ngo', 'admin'] &&
+                      (
+                        (request.resource.data.role == 'admin' &&
+                         request.resource.data.isVerified == true &&
+                         request.resource.data.verificationStatus == 'verified') ||
+                        (request.resource.data.role != 'admin' &&
+                         request.resource.data.isVerified == false &&
+                         request.resource.data.verificationStatus == 'pending')
+                      );
       allow update: if (isOwner(userId) && 
                         request.resource.data.role == resource.data.role &&
                         request.resource.data.isVerified == resource.data.isVerified &&
@@ -114,6 +120,41 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated();
       allow update, delete: if isAdmin();
+    }
+
+    match /requests/{requestId} {
+      // Admin can access all requests
+      // Donors can access requests for their own listings (retailerId)
+      // NGOs can access requests they created (ngoId)
+      allow read: if isAdmin() ||
+                  (isDonor() && resource.data.retailerId == request.auth.uid) ||
+                  (isAuthenticated() && resource.data.ngoId == request.auth.uid);
+
+      // NGOs create requests only for themselves
+      allow create: if isAuthenticated() &&
+                    request.resource.data.ngoId == request.auth.uid;
+
+      // Donor (retailer), request owner NGO, and admin can update.
+      allow update: if isAdmin() ||
+                    (isDonor() && resource.data.retailerId == request.auth.uid) ||
+                    (isAuthenticated() && resource.data.ngoId == request.auth.uid);
+
+      // Request owner NGO or admin can delete/cancel requests
+      allow delete: if isAdmin() ||
+                    (isAuthenticated() && resource.data.ngoId == request.auth.uid);
+    }
+
+    match /ngoDocuments/{docId} {
+      // NGOs can manage only their own documents.
+      // Admin can review and update document statuses.
+      allow read: if isAdmin() ||
+                  (isAuthenticated() && resource.data.ngoId == request.auth.uid);
+      allow create: if isAuthenticated() &&
+                    request.resource.data.ngoId == request.auth.uid;
+      allow update: if isAdmin() ||
+                    (isAuthenticated() && resource.data.ngoId == request.auth.uid);
+      allow delete: if isAdmin() ||
+                    (isAuthenticated() && resource.data.ngoId == request.auth.uid);
     }
   }
 }

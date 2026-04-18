@@ -15,6 +15,8 @@ export interface UserProfile {
   contactPerson?: string;
   phoneNumber?: string;
   description?: string;
+  contributionType?: string;
+  contributionSummary?: string;
   // Optional location for distance sorting / directions
   location?: {
     address?: string;

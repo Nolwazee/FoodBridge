@@ -24,15 +24,15 @@ export default function RetailSidebar({
   ];
 
   return (
-    <aside className="w-72 bg-white border-r border-gray-100 flex flex-col h-[calc(100vh-64px)] sticky top-16">
+    <aside className="w-[260px] shrink-0 bg-white border-r border-slate-100 min-h-[calc(100vh-64px)] sticky top-16">
       <div className="p-6">
         <div className="flex items-center gap-2 mb-6">
-          <div className="bg-[#2D9C75] p-1.5 rounded-lg">
+          <div className="bg-[#2D9C75] p-2 rounded-2xl">
             <Leaf className="h-5 w-5 text-white" />
           </div>
           <div>
-            <div className="text-sm font-bold text-[#1A2B2B] leading-tight">FoodBridge</div>
-            <div className="text-[11px] text-gray-500 -mt-0.5">Retailer Portal</div>
+            <div className="font-extrabold text-slate-900 leading-tight">FoodBridge</div>
+            <div className="text-[10px] font-bold tracking-widest text-slate-400 uppercase -mt-0.5">Retailer Portal</div>
           </div>
         </div>
 
@@ -42,11 +42,11 @@ export default function RetailSidebar({
               key={item.id}
               onClick={() => onChange(item.id)}
               className={cn(
-                'w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors',
-                active === item.id ? 'bg-[#E9F5F1] text-[#2D9C75]' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                'w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition-colors',
+                active === item.id ? 'bg-[#E9F5F1] text-[#2D9C75]' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
               )}
             >
-              <item.icon className={cn('h-4 w-4', active === item.id ? 'text-[#2D9C75]' : 'text-gray-400')} />
+              <item.icon className={cn('h-4 w-4', active === item.id ? 'text-[#2D9C75]' : 'text-slate-400')} />
               {item.label}
             </button>
           ))}
@@ -63,15 +63,15 @@ export default function RetailSidebar({
       </div>
 
       <div className="mt-auto p-6 border-t border-gray-50 space-y-2">
-        <button className="w-full flex items-center gap-2 text-sm text-gray-500 hover:text-gray-900">
-          <HelpCircle className="h-4 w-4 text-gray-400" />
+        <button className="w-full flex items-center gap-2 text-sm font-bold text-slate-600 hover:text-slate-900">
+          <HelpCircle className="h-4 w-4 text-slate-400" />
           Help Center
         </button>
         <button
           onClick={() => signOut(auth)}
-          className="w-full flex items-center gap-2 text-sm text-gray-500 hover:text-gray-900"
+          className="w-full flex items-center gap-2 text-sm font-bold text-slate-600 hover:text-slate-900"
         >
-          <LogOut className="h-4 w-4 text-gray-400" />
+          <LogOut className="h-4 w-4 text-slate-400" />
           Sign Out
         </button>
       </div>

@@ -11,6 +11,7 @@ import AuthModal from './components/AuthModal';
 import { Toaster } from '@/components/ui/sonner';
 import RetailPortal from './components/retail/RetailPortal';
 import NgoPortal from './components/ngo/NgoPortal';
+import ManagerDashboard from './components/admin/ManagerDashboard';
 
 export default function App() {
   const [user, setUser] = useState<any>(null);
@@ -64,7 +65,8 @@ export default function App() {
     if (!user || !profile) {
       return <Hero onGetStarted={() => setIsAuthModalOpen(true)} />;
     }
-
+    
+    
     if (profile.role === 'admin') {
       return <AdminDashboard profile={profile} />;
     }

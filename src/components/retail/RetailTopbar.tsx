@@ -1,4 +1,4 @@
-import { Bell, Search, Settings } from 'lucide-react';
+import { Bell, Leaf, Search, Settings } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -21,19 +21,16 @@ export default function RetailTopbar({
   ];
 
   return (
-    <div className="h-16 border-b bg-white sticky top-0 z-40">
+    <div className="h-16 border-b border-slate-100 bg-white/80 backdrop-blur sticky top-0 z-40">
       <div className="max-w-[1400px] mx-auto px-6 h-full flex items-center gap-6">
-        <div className="flex-1">
-          <div className="relative max-w-lg">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-            <Input
-              placeholder="Search analytics or inventory..."
-              className="pl-10 rounded-full border-gray-100 bg-gray-50 focus-visible:ring-1 focus-visible:ring-[#2D9C75]"
-            />
+        <div className="flex items-center gap-3">
+          <div className="h-9 w-9 rounded-2xl bg-[#2D9C75] flex items-center justify-center">
+            <Leaf className="h-5 w-5 text-white" />
           </div>
+          <div className="font-extrabold text-slate-900 tracking-tight">FoodBridge</div>
         </div>
 
-        <nav className="hidden md:flex items-center gap-5">
+        <nav className="hidden md:flex items-center gap-5 ml-2">
           {tabs.map((t) => (
             <button
               key={t.id}
@@ -47,6 +44,16 @@ export default function RetailTopbar({
             </button>
           ))}
         </nav>
+
+        <div className="flex-1">
+          <div className="relative max-w-xl ml-2">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <Input
+              placeholder="Search inventory, pickups, or partners..."
+              className="pl-10 rounded-full border-gray-100 bg-gray-50 focus-visible:ring-1 focus-visible:ring-[#2D9C75]"
+            />
+          </div>
+        </div>
 
         <div className="flex items-center gap-3">
           <button className="h-9 w-9 rounded-full bg-gray-50 border border-gray-100 flex items-center justify-center hover:bg-gray-100">
