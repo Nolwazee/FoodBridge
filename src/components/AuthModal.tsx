@@ -18,7 +18,7 @@ interface AuthModalProps {
 export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
   const [isLogin, setIsLogin] = useState(true);
   
-  const [fullName, setFullName] = useState('');
+  const [organizationName, setOrganizationName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -36,7 +36,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
         return;
       }
     } else {
-      if (!fullName || !email || !password) {
+      if (!organizationName.trim() || !email || !password) {
         toast.error('Please fill in all fields');
         return;
       }
@@ -78,9 +78,9 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
         const profileData = {
           uid: result.user.uid,
           email: result.user.email,
-          displayName: fullName,
+          displayName: organizationName.trim(),
           role,
-          organizationName: fullName, // Optional mapping
+          organizationName: organizationName.trim(),
           isVerified: role === 'admin',
           verificationStatus: role === 'admin' ? 'verified' : 'pending',
           createdAt: serverTimestamp()
@@ -129,7 +129,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
   const resetForm = () => {
     setTimeout(() => {
       setIsLogin(true);
-      setFullName('');
+      setOrganizationName('');
       setEmail('');
       setPassword('');
       setConfirmPassword('');
@@ -205,17 +205,24 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
 
             {!isLogin && (
               <div className="space-y-2">
-                <Label className="text-[15px] font-medium text-[#334155]" htmlFor="fullName">Full Name</Label>
+                <Label className="text-[15px] font-medium text-[#334155]" htmlFor="organizationName">
+                  {role === 'ngo' ? 'NGO name' : 'Retail name'}
+                </Label>
                 <div className="relative">
                   <div className="absolute left-3 top-1/2 -translate-y-1/2 flex items-center justify-center border-r pr-2 border-gray-200">
                     <User className="h-5 w-5 text-gray-400" />
                   </div>
                   <Input 
-                    id="fullName"
-                    placeholder="John Doe" 
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
+                    id="organizationName"
+                    placeholder={
+                      role === 'ngo'
+                        ? 'e.g. Hope Community Food Project'
+                        : 'e.g. Green Valley Market'
+                    }
+                    value={organizationName}
+                    onChange={(e) => setOrganizationName(e.target.value)}
                     required={!isLogin}
+                    autoComplete="organization"
                     className="rounded-xl h-[52px] pl-14 border-[#2D9C75] bg-white focus-visible:ring-1 focus-visible:ring-[#2D9C75]"
                   />
                 </div>

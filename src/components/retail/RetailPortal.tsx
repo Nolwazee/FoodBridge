@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { collection, query, onSnapshot, orderBy, addDoc, serverTimestamp, doc, updateDoc, getDoc, where } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType, storage } from '@/src/lib/firebase';
+import { collection, query, onSnapshot, orderBy, addDoc, serverTimestamp, doc, updateDoc, getDoc, where, getDocs } from 'firebase/firestore';
+import { db, handleFirestoreError, OperationType } from '@/src/lib/firebase';
 import type { DonationRequest, DonationRequestStatus, FoodListing, UserProfile } from '@/src/types';
 import { toast } from 'sonner';
 import { logAudit } from '@/src/lib/audit';
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 
 import RetailSidebar, { type RetailSectionId } from './RetailSidebar';
 import RetailTopbar, { type RetailTopTab } from './RetailTopbar';
@@ -15,10 +14,27 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { MoreVertical, Plus, LayoutDashboard } from 'lucide-react';
+import { MoreVertical, Plus, LayoutDashboard, Eye, X, Compass, CheckCircle2 } from 'lucide-react';
 import ManagerDashboard from '@/src/components/admin/ManagerDashboard';
+import {
+  DONATION_SECTIONS,
+  DONATION_WASTE_CONTEXT,
+  type DonationSectionId,
+  getSectionById,
+} from '@/src/data/donationProductTaxonomy';
 
 export default function RetailPortal({ profile }: { profile: UserProfile }) {
+  interface NgoDocumentPreview {
+    id: string;
+    ngoId: string;
+    type: string;
+    status: string;
+    fileName?: string;
+    fileMime?: string;
+    fileBase64?: string;
+    uploadedAt?: unknown;
+  }
+
   const [openManagerDashboard, setOpenManagerDashboard] = useState(false);
   const [topTab, setTopTab] = useState<RetailTopTab>('dashboard');
   const [section, setSection] = useState<RetailSectionId>('overview');
@@ -29,11 +45,27 @@ export default function RetailPortal({ profile }: { profile: UserProfile }) {
   const [selectedDirectNgoId, setSelectedDirectNgoId] = useState<string>('none');
 
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isCreatingListing, setIsCreatingListing] = useState(false);
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
+  const [onboardingStep, setOnboardingStep] = useState(0);
+  const [onboardingForm, setOnboardingForm] = useState({
+    contactPerson: profile.contactPerson || '',
+    phoneNumber: profile.phoneNumber || '',
+    pickupAddress: profile.location?.address || '',
+    preferredCategory: 'produce',
+    averageDailyKg: '',
+    operatingHours: '',
+    complianceAccepted: false,
+  });
+  const [previewRequest, setPreviewRequest] = useState<DonationRequest | null>(null);
+  const [previewDocuments, setPreviewDocuments] = useState<NgoDocumentPreview[]>([]);
+  const [previewDocument, setPreviewDocument] = useState<NgoDocumentPreview | null>(null);
+  const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [listingPhotoFile, setListingPhotoFile] = useState<File | null>(null);
   const [newListing, setNewListing] = useState({
     title: '',
-    description: '',
-    category: 'produce' as FoodListing['category'],
+    donationSectionId: '' as DonationSectionId | '',
+    donationProductType: '',
     qty: '',
     unit: 'kg' as FoodListing['unit'],
     expiryDate: '',
@@ -80,11 +112,28 @@ export default function RetailPortal({ profile }: { profile: UserProfile }) {
     };
   }, [profile.uid]);
 
+  useEffect(() => {
+    const onboardingKey = `retailOnboardingSeen:${profile.uid}`;
+    const hasSeenOnboarding = window.localStorage.getItem(onboardingKey) === 'true';
+    if (!hasSeenOnboarding) {
+      setIsOnboardingOpen(true);
+      setOnboardingStep(0);
+    }
+  }, [profile.uid]);
+
   const myListings = useMemo(() => listings.filter((l) => l.donorId === profile.uid), [listings, profile.uid]);
   const myRequests = useMemo(() => requests.filter((r) => r.retailerId === profile.uid), [requests, profile.uid]);
   const pendingRequests = useMemo(() => myRequests.filter((r) => r.status === 'pending'), [myRequests]);
   const approvedRequests = useMemo(() => myRequests.filter((r) => r.status === 'approved'), [myRequests]);
   const completedRequests = useMemo(() => myRequests.filter((r) => r.status === 'completed'), [myRequests]);
+
+  const selectedDonationSection = useMemo(
+    () =>
+      newListing.donationSectionId
+        ? getSectionById(newListing.donationSectionId as DonationSectionId)
+        : undefined,
+    [newListing.donationSectionId]
+  );
 
   const expiringSoonCount = useMemo(() => {
     const now = Date.now();
@@ -114,36 +163,79 @@ export default function RetailPortal({ profile }: { profile: UserProfile }) {
     }
   };
 
-  const uploadListingPhoto = async (file: File) => {
-    const safeName = file.name.replace(/[^\w.\-() ]+/g, '_');
-    const storageRef = ref(storage, `listingPhotos/${profile.uid}/${Date.now()}-${safeName}`);
-    await uploadBytes(storageRef, file, { contentType: file.type });
-    return await getDownloadURL(storageRef);
-  };
+  /** Encode image as Base64 data URL and store on the listing (no Firebase Storage). Keeps under Firestore doc size. */
+  const imageFileToBase64DataUrl = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const maxBytes = 750 * 1024;
+      if (file.size > maxBytes) {
+        reject(new Error(`Image must be under ${Math.round(maxBytes / 1024)}KB to save in the database.`));
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = String(reader.result || '');
+        if (dataUrl.length > 900_000) {
+          reject(new Error('Encoded image is too large for Firestore. Use a smaller image.'));
+          return;
+        }
+        resolve(dataUrl);
+      };
+      reader.onerror = () => reject(new Error('Failed to read image file.'));
+      reader.readAsDataURL(file);
+    });
 
   const handleAddListing = async () => {
+    if (isCreatingListing) return;
     try {
+      setIsCreatingListing(true);
       const qty = newListing.qty ? Number(newListing.qty) : undefined;
-      if (!newListing.title || !newListing.expiryDate || !newListing.location) {
+      if (!newListing.title?.trim() || !newListing.expiryDate || !newListing.location) {
         toast.error('Please fill in title, expiry date, and location.');
+        setIsCreatingListing(false);
+        return;
+      }
+      if (!newListing.donationSectionId || !newListing.donationProductType.trim()) {
+        toast.error('Please select category and product type.');
+        setIsCreatingListing(false);
+        return;
+      }
+      const sectionMeta = getSectionById(newListing.donationSectionId as DonationSectionId);
+      if (!sectionMeta) {
+        toast.error('Invalid category selection.');
+        setIsCreatingListing(false);
         return;
       }
 
-      const photoUrl = listingPhotoFile ? await uploadListingPhoto(listingPhotoFile) : undefined;
+      let photoUrl: string | undefined;
+      if (listingPhotoFile) {
+        try {
+          photoUrl = await imageFileToBase64DataUrl(listingPhotoFile);
+        } catch (imgErr) {
+          toast.error(imgErr instanceof Error ? imgErr.message : 'Could not process image.');
+          setIsCreatingListing(false);
+          return;
+        }
+      }
       const directNgoId = selectedDirectNgoId !== 'none' ? selectedDirectNgoId : null;
       const directNgo = directNgoId ? verifiedNgos.find((n) => n.uid === directNgoId) || null : null;
       const referenceNumber = `FB-${Math.random().toString(36).slice(2, 6).toUpperCase()}-${Date.now().toString().slice(-4)}`;
 
-      const listingRef = await addDoc(collection(db, 'listings'), {
-        title: newListing.title,
-        description: newListing.description,
-        category: newListing.category,
+      const productLine = newListing.donationProductType.trim();
+      const listingPayload = {
+        title: newListing.title.trim(),
+        description: `${sectionMeta.label}: ${productLine}`,
+        donationSectionId: sectionMeta.id,
+        donationSectionLabel: sectionMeta.label,
+        donationProductType: productLine,
+        category: sectionMeta.category,
         qty: Number.isFinite(qty) ? qty : undefined,
         unit: newListing.unit,
         quantity: newListing.qty ? `${newListing.qty} ${newListing.unit}` : '',
         photoUrl,
         donorId: profile.uid,
         donorName: profile.organizationName || profile.displayName,
+        donorEmail: profile.email || undefined,
+        donorPhone: profile.phoneNumber || undefined,
         donorLocation: profile.location || null,
         status: directNgoId ? 'claimed' : 'available',
         claimedBy: directNgoId || undefined,
@@ -153,7 +245,11 @@ export default function RetailPortal({ profile }: { profile: UserProfile }) {
         pickupWindowEnd: newListing.pickupWindowEnd ? new Date(newListing.pickupWindowEnd) : undefined,
         location: newListing.location,
         createdAt: serverTimestamp(),
-      });
+      };
+      const listingRef = await addDoc(
+        collection(db, 'listings'),
+        Object.fromEntries(Object.entries(listingPayload).filter(([, value]) => value !== undefined))
+      );
 
       if (directNgoId && directNgo) {
         await addDoc(collection(db, 'requests'), {
@@ -186,8 +282,8 @@ export default function RetailPortal({ profile }: { profile: UserProfile }) {
       setSelectedDirectNgoId('none');
       setNewListing({
         title: '',
-        description: '',
-        category: 'produce',
+        donationSectionId: '',
+        donationProductType: '',
         qty: '',
         unit: 'kg',
         expiryDate: '',
@@ -197,10 +293,42 @@ export default function RetailPortal({ profile }: { profile: UserProfile }) {
       });
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'listings');
+    } finally {
+      setIsCreatingListing(false);
     }
   };
 
   const generateReferenceNumber = () => `FB-${Math.random().toString(36).slice(2, 6).toUpperCase()}-${Date.now().toString().slice(-4)}`;
+
+  const canContinueOnboarding = () => {
+    if (onboardingStep === 0) {
+      return Boolean(onboardingForm.contactPerson.trim() && onboardingForm.phoneNumber.trim() && onboardingForm.pickupAddress.trim());
+    }
+    if (onboardingStep === 1) {
+      return Boolean(onboardingForm.preferredCategory && onboardingForm.averageDailyKg.trim() && onboardingForm.operatingHours.trim());
+    }
+    return onboardingForm.complianceAccepted;
+  };
+
+  const openNgoDocumentsPreview = async (request: DonationRequest) => {
+    try {
+      setPreviewRequest(request);
+      setPreviewDocument(null);
+      setIsLoadingPreview(true);
+      const docsQuery = query(collection(db, 'ngoDocuments'), where('ngoId', '==', request.ngoId));
+      const docsSnapshot = await getDocs(docsQuery);
+      const docs = docsSnapshot.docs.map((d) => ({ id: d.id, ...d.data() } as NgoDocumentPreview));
+      setPreviewDocuments(docs);
+      if (docs.length === 0) {
+        toast.message('No NGO documents uploaded yet.');
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.LIST, 'ngoDocuments');
+      setPreviewRequest(null);
+    } finally {
+      setIsLoadingPreview(false);
+    }
+  };
 
   const approveRequest = async (request: DonationRequest) => {
     try {
@@ -314,6 +442,17 @@ export default function RetailPortal({ profile }: { profile: UserProfile }) {
 
     return (
       <div className="space-y-6">
+        <div className="rounded-2xl border border-blue-100 bg-blue-50 px-5 py-4 flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-sm font-bold text-gray-900">Retail onboarding guide</div>
+            <div className="text-xs text-gray-600 mt-1">Complete setup steps to start receiving and approving NGO claims faster.</div>
+          </div>
+          <Button variant="outline" className="rounded-xl bg-white" onClick={() => { setOnboardingStep(0); setIsOnboardingOpen(true); }}>
+            <Compass className="h-4 w-4 mr-2" />
+            Start Onboarding
+          </Button>
+        </div>
+
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
           <div className="bg-white rounded-2xl border border-gray-100 p-6">
             <div className="text-[10px] uppercase tracking-wider text-gray-400 font-bold">Total Food Saved</div>
@@ -541,9 +680,20 @@ export default function RetailPortal({ profile }: { profile: UserProfile }) {
         {myListings.map((l) => (
           <div key={l.id} className="bg-white rounded-2xl border border-gray-100 p-5">
             <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="font-bold text-gray-900 truncate">{l.title}</div>
-                <div className="text-xs text-gray-500 mt-1 truncate">{l.location}</div>
+              <div className="min-w-0 flex items-start gap-3">
+                <div className="h-14 w-14 rounded-xl bg-gray-100 overflow-hidden shrink-0 border border-gray-100">
+                  <img
+                    src={l.photoUrl || fallbackThumb(l.category)}
+                    alt={l.title}
+                    className="h-full w-full object-cover"
+                    loading="lazy"
+                    referrerPolicy="no-referrer"
+                  />
+                </div>
+                <div className="min-w-0">
+                  <div className="font-bold text-gray-900 truncate">{l.title}</div>
+                  <div className="text-xs text-gray-500 mt-1 truncate">{l.location}</div>
+                </div>
               </div>
               <Badge variant="outline" className="text-[10px] font-bold">{l.status.toUpperCase()}</Badge>
             </div>
@@ -674,6 +824,10 @@ export default function RetailPortal({ profile }: { profile: UserProfile }) {
                     </div>
                     {r.note && <div className="text-xs text-gray-400 mt-2 italic">“{r.note}”</div>}
                     <div className="mt-3 flex gap-2">
+                      <Button variant="outline" className="rounded-xl" onClick={() => openNgoDocumentsPreview(r)}>
+                        <Eye className="h-4 w-4 mr-2" />
+                        Preview NGO Docs
+                      </Button>
                       <Button variant="outline" className="rounded-xl border-red-200 text-red-600 hover:bg-red-50" onClick={() => rejectRequest(r)}>
                         Reject
                       </Button>
@@ -702,9 +856,15 @@ export default function RetailPortal({ profile }: { profile: UserProfile }) {
                       <div className="font-bold text-gray-900 truncate">{listing?.title || 'Donation'}</div>
                       <div className="text-xs text-gray-500 mt-1 truncate">NGO: {r.ngoSnapshot?.organizationName || r.ngoId} · Ref: {r.referenceNumber || '—'}</div>
                     </div>
-                    <Button className="bg-[#2D9C75] hover:bg-[#258563] text-white rounded-xl" onClick={() => markPickedUp(r)}>
-                      Mark as Picked Up
-                    </Button>
+                    <div className="flex gap-2">
+                      <Button variant="outline" className="rounded-xl" onClick={() => openNgoDocumentsPreview(r)}>
+                        <Eye className="h-4 w-4 mr-2" />
+                        NGO Docs
+                      </Button>
+                      <Button className="bg-[#2D9C75] hover:bg-[#258563] text-white rounded-xl" onClick={() => markPickedUp(r)}>
+                        Mark as Picked Up
+                      </Button>
+                    </div>
                   </div>
                 );
               })
@@ -720,7 +880,20 @@ export default function RetailPortal({ profile }: { profile: UserProfile }) {
   }
 
   return (
-    <div className="min-h-[calc(100vh-64px)] bg-[#F8FAFA]">
+    <div className="relative min-h-[calc(100vh-64px)] overflow-hidden bg-[#F8FAFA]">
+      <div
+        className="pointer-events-none absolute inset-0 z-0 bg-cover bg-center bg-no-repeat"
+        style={{
+          backgroundImage:
+            "url('https://images.unsplash.com/photo-1604719312566-8912e9224c5a?auto=format&fit=crop&w=1920&q=75')",
+        }}
+        aria-hidden
+      />
+      <div
+        className="pointer-events-none absolute inset-0 z-0 bg-gradient-to-br from-[#F8FAFA]/93 via-white/88 to-emerald-100/65"
+        aria-hidden
+      />
+      <div className="relative z-10">
       <RetailTopbar activeTab={topTab} onTabChange={setTopTab} orgName={profile.organizationName || profile.displayName} />
       <div className="flex">
         <RetailSidebar
@@ -736,14 +909,27 @@ export default function RetailPortal({ profile }: { profile: UserProfile }) {
         <main className="flex-1 p-8 overflow-y-auto">
           <div className="max-w-[1400px] mx-auto">
             <div className="mb-4 flex justify-end">
-              <Button
-                variant="outline"
-                className="rounded-xl"
-                onClick={() => setOpenManagerDashboard(true)}
-              >
-                <LayoutDashboard className="h-4 w-4 mr-2" />
-                Open Manager Dashboard
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  className="rounded-xl"
+                  onClick={() => {
+                    setOnboardingStep(0);
+                    setIsOnboardingOpen(true);
+                  }}
+                >
+                  <Compass className="h-4 w-4 mr-2" />
+                  Retail Onboarding
+                </Button>
+                <Button
+                  variant="outline"
+                  className="rounded-xl"
+                  onClick={() => setOpenManagerDashboard(true)}
+                >
+                  <LayoutDashboard className="h-4 w-4 mr-2" />
+                  Open Manager Dashboard
+                </Button>
+              </div>
             </div>
             {topTab === 'logistics' ? (
               renderLogistics()
@@ -763,54 +949,101 @@ export default function RetailPortal({ profile }: { profile: UserProfile }) {
       </div>
 
       <Dialog open={isAddModalOpen} onOpenChange={setIsAddModalOpen}>
-        <DialogContent className="sm:max-w-[560px] rounded-3xl">
+        <DialogContent className="sm:max-w-[640px] max-h-[min(90vh,800px)] overflow-y-auto rounded-3xl">
           <DialogHeader>
             <DialogTitle>Create Donation Listing</DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-2">
             <div className="grid gap-2">
               <Label>Title</Label>
-              <Input value={newListing.title} onChange={(e) => setNewListing({ ...newListing, title: e.target.value })} placeholder="e.g. 50kg Fresh Tomatoes" />
+              <Input
+                value={newListing.title}
+                onChange={(e) => setNewListing({ ...newListing, title: e.target.value })}
+                placeholder="Short name (auto-fills when you choose product type)"
+              />
             </div>
             <div className="grid gap-2">
-              <Label>Description</Label>
-              <Input value={newListing.description} onChange={(e) => setNewListing({ ...newListing, description: e.target.value })} placeholder="Handling instructions (optional)" />
+              <Label>Category</Label>
+              <Select
+                value={newListing.donationSectionId || undefined}
+                onValueChange={(v) =>
+                  setNewListing((prev) => ({
+                    ...prev,
+                    donationSectionId: v as DonationSectionId,
+                    donationProductType: '',
+                  }))
+                }
+              >
+                <SelectTrigger><SelectValue placeholder="Select food category" /></SelectTrigger>
+                <SelectContent className="max-h-[min(280px,50vh)]">
+                  {DONATION_SECTIONS.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {selectedDonationSection && (
+                <p className="text-xs text-gray-500 leading-snug">{selectedDonationSection.blurb}</p>
+              )}
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2">
-                <Label>Category</Label>
-                <Select value={newListing.category} onValueChange={(v) => setNewListing({ ...newListing, category: v as any })}>
+            <div className="grid gap-2">
+              <Label>Product type</Label>
+              <Select
+                value={newListing.donationProductType || undefined}
+                disabled={!selectedDonationSection}
+                onValueChange={(v) =>
+                  setNewListing((prev) => ({
+                    ...prev,
+                    donationProductType: v,
+                    title: prev.title.trim() ? prev.title : v,
+                  }))
+                }
+              >
+                <SelectTrigger><SelectValue placeholder={selectedDonationSection ? 'Select specific product' : 'Choose a category first'} /></SelectTrigger>
+                <SelectContent className="max-h-[min(320px,50vh)]">
+                  {(selectedDonationSection?.items ?? []).map((item) => (
+                    <SelectItem key={item} value={item}>
+                      {item}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label>Quantity</Label>
+              <div className="grid grid-cols-2 gap-2 max-w-md">
+                <Input value={newListing.qty} onChange={(e) => setNewListing({ ...newListing, qty: e.target.value })} placeholder="e.g. 50" />
+                <Select value={newListing.unit} onValueChange={(v) => setNewListing({ ...newListing, unit: v as FoodListing['unit'] })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="produce">Produce</SelectItem>
-                    <SelectItem value="bakery">Bakery</SelectItem>
-                    <SelectItem value="dairy">Dairy</SelectItem>
-                    <SelectItem value="meat">Meat</SelectItem>
-                    <SelectItem value="pantry">Pantry</SelectItem>
-                    <SelectItem value="prepared">Prepared</SelectItem>
+                    <SelectItem value="kg">kg</SelectItem>
+                    <SelectItem value="g">g</SelectItem>
+                    <SelectItem value="l">l</SelectItem>
+                    <SelectItem value="ml">ml</SelectItem>
+                    <SelectItem value="unit">unit</SelectItem>
+                    <SelectItem value="box">box</SelectItem>
+                    <SelectItem value="crate">crate</SelectItem>
+                    <SelectItem value="bag">bag</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-              <div className="grid gap-2">
-                <Label>Quantity</Label>
-                <div className="grid grid-cols-2 gap-2">
-                  <Input value={newListing.qty} onChange={(e) => setNewListing({ ...newListing, qty: e.target.value })} placeholder="e.g. 50" />
-                  <Select value={newListing.unit} onValueChange={(v) => setNewListing({ ...newListing, unit: v as any })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="kg">kg</SelectItem>
-                      <SelectItem value="g">g</SelectItem>
-                      <SelectItem value="l">l</SelectItem>
-                      <SelectItem value="ml">ml</SelectItem>
-                      <SelectItem value="unit">unit</SelectItem>
-                      <SelectItem value="box">box</SelectItem>
-                      <SelectItem value="crate">crate</SelectItem>
-                      <SelectItem value="bag">bag</SelectItem>
-                    </SelectContent>
-                  </Select>
+            </div>
+            <details className="rounded-xl border border-gray-100 bg-gray-50/80 px-3 py-2 text-sm">
+              <summary className="cursor-pointer font-medium text-gray-800 py-1">
+                {DONATION_WASTE_CONTEXT.intro}
+              </summary>
+              <div className="mt-2 space-y-2 text-xs text-gray-600 pb-1">
+                <div className="grid grid-cols-1 gap-1.5">
+                  {DONATION_WASTE_CONTEXT.rows.map((row) => (
+                    <div key={row.reason} className="flex flex-col sm:flex-row sm:gap-2 border-b border-gray-100/80 pb-1.5 last:border-0">
+                      <span className="font-medium text-gray-700 shrink-0">{row.reason}</span>
+                      <span className="text-gray-500">{row.example}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
-            </div>
+            </details>
             <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label>Expiry</Label>
@@ -859,12 +1092,255 @@ export default function RetailPortal({ profile }: { profile: UserProfile }) {
               </div>
             </div>
 
-            <Button onClick={handleAddListing} className="bg-[#2D9C75] hover:bg-[#258563] text-white rounded-xl h-11 font-bold">
-              Create Listing
+            <Button
+              type="button"
+              onClick={handleAddListing}
+              disabled={isCreatingListing}
+              className="bg-[#2D9C75] hover:bg-[#258563] disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-xl h-11 font-bold"
+            >
+              {isCreatingListing ? 'Creating...' : 'Create Listing'}
             </Button>
           </div>
         </DialogContent>
       </Dialog>
+
+      {previewRequest && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-5xl max-h-[90vh] overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-gray-900">NGO Documents Preview</h3>
+                <p className="text-xs text-gray-500 mt-1">
+                  {previewRequest.ngoSnapshot?.organizationName || previewRequest.ngoId}
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setPreviewRequest(null);
+                  setPreviewDocuments([]);
+                  setPreviewDocument(null);
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] h-[70vh]">
+              <div className="border-r border-gray-100 p-4 overflow-y-auto bg-gray-50">
+                {isLoadingPreview ? (
+                  <div className="text-sm text-gray-500">Loading documents...</div>
+                ) : previewDocuments.length === 0 ? (
+                  <div className="text-sm text-gray-500">No documents available.</div>
+                ) : (
+                  <div className="space-y-2">
+                    {previewDocuments.map((docItem) => (
+                      <button
+                        key={docItem.id}
+                        onClick={() => setPreviewDocument(docItem)}
+                        className={`w-full text-left rounded-xl border px-3 py-2 transition-colors ${
+                          previewDocument?.id === docItem.id ? 'border-[#2D9C75] bg-emerald-50' : 'border-gray-200 bg-white hover:bg-gray-100'
+                        }`}
+                      >
+                        <div className="text-sm font-semibold text-gray-900 capitalize">{docItem.type.replace('_', ' ')}</div>
+                        <div className="text-xs text-gray-500 truncate mt-1">{docItem.fileName || 'Unnamed file'}</div>
+                        <div className="text-[11px] mt-1 uppercase tracking-wide text-gray-400">{docItem.status || 'submitted'}</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="h-full">
+                {previewDocument?.fileBase64 ? (
+                  <iframe
+                    src={`data:${previewDocument.fileMime || 'application/pdf'};base64,${previewDocument.fileBase64}`}
+                    className="w-full h-full"
+                    title="NGO Document Preview"
+                  />
+                ) : (
+                  <div className="h-full flex items-center justify-center text-sm text-gray-500">
+                    Select a document to preview.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isOnboardingOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-2xl overflow-hidden border border-gray-100">
+            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-gray-900">Retail Onboarding</h3>
+                <p className="text-xs text-gray-500 mt-1">Step {onboardingStep + 1} of 3</p>
+              </div>
+              <button
+                onClick={() => setIsOnboardingOpen(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {onboardingStep === 0 && (
+                <div className="space-y-3">
+                  <div className="text-lg font-bold text-gray-900">1) Business details form</div>
+                  <p className="text-sm text-gray-600">Complete your contact and pickup details before using Logistics workflows.</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label htmlFor="onb-contact">Contact person</Label>
+                      <Input
+                        id="onb-contact"
+                        value={onboardingForm.contactPerson}
+                        onChange={(e) => setOnboardingForm((prev) => ({ ...prev, contactPerson: e.target.value }))}
+                        placeholder="Store manager name"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="onb-phone">Phone number</Label>
+                      <Input
+                        id="onb-phone"
+                        value={onboardingForm.phoneNumber}
+                        onChange={(e) => setOnboardingForm((prev) => ({ ...prev, phoneNumber: e.target.value }))}
+                        placeholder="+27..."
+                      />
+                    </div>
+                    <div className="space-y-1 md:col-span-2">
+                      <Label htmlFor="onb-address">Default pickup address</Label>
+                      <Input
+                        id="onb-address"
+                        value={onboardingForm.pickupAddress}
+                        onChange={(e) => setOnboardingForm((prev) => ({ ...prev, pickupAddress: e.target.value }))}
+                        placeholder="Enter pickup address"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {onboardingStep === 1 && (
+                <div className="space-y-3">
+                  <div className="text-lg font-bold text-gray-900">2) Donation preferences form</div>
+                  <p className="text-sm text-gray-600">Set your expected inventory profile so NGOs can coordinate better.</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label>Primary donation category</Label>
+                      <Select
+                        value={onboardingForm.preferredCategory}
+                        onValueChange={(value) => setOnboardingForm((prev) => ({ ...prev, preferredCategory: value }))}
+                      >
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="produce">Produce</SelectItem>
+                          <SelectItem value="bakery">Bakery</SelectItem>
+                          <SelectItem value="dairy">Dairy</SelectItem>
+                          <SelectItem value="meat">Meat</SelectItem>
+                          <SelectItem value="pantry">Pantry</SelectItem>
+                          <SelectItem value="prepared">Prepared</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="onb-qty">Average daily donation (kg)</Label>
+                      <Input
+                        id="onb-qty"
+                        type="number"
+                        min="0"
+                        value={onboardingForm.averageDailyKg}
+                        onChange={(e) => setOnboardingForm((prev) => ({ ...prev, averageDailyKg: e.target.value }))}
+                        placeholder="e.g. 40"
+                      />
+                    </div>
+                    <div className="space-y-1 md:col-span-2">
+                      <Label htmlFor="onb-hours">Pickup operating hours</Label>
+                      <Input
+                        id="onb-hours"
+                        value={onboardingForm.operatingHours}
+                        onChange={(e) => setOnboardingForm((prev) => ({ ...prev, operatingHours: e.target.value }))}
+                        placeholder="Mon-Fri, 08:00-17:00"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {onboardingStep === 2 && (
+                <div className="space-y-3">
+                  <div className="text-lg font-bold text-gray-900">3) Compliance confirmation form</div>
+                  <p className="text-sm text-gray-600">Confirm operational readiness so your team can complete pickups consistently.</p>
+                  <label className="rounded-xl bg-gray-50 border border-gray-100 p-4 text-xs text-gray-700 flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={onboardingForm.complianceAccepted}
+                      onChange={(e) => setOnboardingForm((prev) => ({ ...prev, complianceAccepted: e.target.checked }))}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      I confirm our retail site can prepare donations safely, verify NGO claims, and mark pickups in the app on time.
+                    </span>
+                  </label>
+                  <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-4 text-xs text-emerald-800 flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4 shrink-0" />
+                    Submit this form to complete onboarding.
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between">
+              <Button
+                variant="outline"
+                className="rounded-xl"
+                disabled={onboardingStep === 0}
+                onClick={() => setOnboardingStep((prev) => Math.max(0, prev - 1))}
+              >
+                Back
+              </Button>
+
+              <div className="flex gap-2">
+                {onboardingStep < 2 ? (
+                  <Button
+                    className="rounded-xl bg-[#2D9C75] hover:bg-[#258563] text-white"
+                    disabled={!canContinueOnboarding()}
+                    onClick={() => {
+                      if (onboardingStep === 0) {
+                        setSection('inventory');
+                        setTopTab('dashboard');
+                      }
+                      if (onboardingStep === 1) {
+                        setTopTab('logistics');
+                      }
+                      setOnboardingStep((prev) => Math.min(2, prev + 1));
+                    }}
+                  >
+                    Next
+                  </Button>
+                ) : (
+                  <Button
+                    className="rounded-xl bg-[#2D9C75] hover:bg-[#258563] text-white"
+                    disabled={!canContinueOnboarding()}
+                    onClick={() => {
+                      window.localStorage.setItem(`retailOnboardingForm:${profile.uid}`, JSON.stringify(onboardingForm));
+                      window.localStorage.setItem(`retailOnboardingSeen:${profile.uid}`, 'true');
+                      setIsOnboardingOpen(false);
+                      setTopTab('dashboard');
+                      setSection('overview');
+                      toast.success('Retail onboarding form submitted successfully.');
+                    }}
+                  >
+                    Submit Form
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      </div>
     </div>
   );
 }

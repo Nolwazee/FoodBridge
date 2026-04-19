@@ -14,7 +14,7 @@ import {
   setDoc,
   writeBatch,
 } from 'firebase/firestore';
-import { db } from '@/src/lib/firebase';
+import { db, handleFirestoreError, OperationType } from '@/src/lib/firebase';
 import { toast } from 'sonner';
 import {
   MapPin,
@@ -213,6 +213,31 @@ const getListingQty = (listing: FoodListing): number => {
   return 0;
 };
 
+const listingCreatedMs = (listing: FoodListing): number => {
+  const c = (listing as any).createdAt as Timestamp | Date | undefined;
+  if (c && typeof (c as Timestamp).toMillis === 'function') return (c as Timestamp).toMillis();
+  if (c instanceof Date) return c.getTime();
+  return 0;
+};
+
+const fallbackImageForCategory = (category: FoodListing['category']): string => {
+  switch (category) {
+    case 'produce':
+      return 'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=1200&q=75';
+    case 'bakery':
+      return 'https://images.unsplash.com/photo-1549931319-a545dcf3bc73?auto=format&fit=crop&w=1200&q=75';
+    case 'dairy':
+      return 'https://images.unsplash.com/photo-1550583724-b2692b85b150?auto=format&fit=crop&w=1200&q=75';
+    case 'meat':
+      return 'https://images.unsplash.com/photo-1603048297172-c92544798d30?auto=format&fit=crop&w=1200&q=75';
+    case 'pantry':
+      return 'https://images.unsplash.com/photo-1604908554027-5b2a604e2e00?auto=format&fit=crop&w=1200&q=75';
+    case 'prepared':
+    default:
+      return 'https://images.unsplash.com/photo-1604908176997-125f25cc500f?auto=format&fit=crop&w=1200&q=75';
+  }
+};
+
 const generateReferenceNumber = (): string => {
   return `FB-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
 };
@@ -275,12 +300,31 @@ const ListingCard: React.FC<{ listing: FoodListing; onRequest: (id: string) => v
     const distance = userLocation ? distanceKm(userLocation, listing.donorLocation) : null;
     const isUrgent = hrsLeft !== null && hrsLeft <= 12 && hrsLeft > 0;
     const isExpiringSoon = hrsLeft !== null && hrsLeft <= 24 && hrsLeft > 0;
+    const imgSrc = listing.photoUrl?.trim() || fallbackImageForCategory(listing.category);
+    const donorEmail = listing.donorEmail;
+    const donorPhone = listing.donorPhone;
+    const descText = listing.description?.trim() || '';
     
     return (
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden group">
-        <div className="relative">
-          <div className="h-32 bg-gradient-to-r from-emerald-500 to-teal-500 flex items-center justify-center">
-            <Package className="w-12 h-12 text-white/30" />
+      <div className="bg-white rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden group flex flex-col">
+        <div className="relative h-44 w-full shrink-0">
+          <img
+            src={imgSrc}
+            alt={listing.title}
+            className="h-full w-full object-cover"
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            onError={(e) => {
+              const el = e.currentTarget;
+              if (el.dataset.fallback === '1') return;
+              el.dataset.fallback = '1';
+              el.src = fallbackImageForCategory('produce');
+            }}
+          />
+          <div className="absolute top-3 left-3">
+            <span className="inline-flex items-center rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-800 shadow-sm">
+              {listing.category}
+            </span>
           </div>
           {isUrgent && (
             <div className="absolute top-3 right-3 bg-red-500 text-white text-xs font-bold px-2 py-1 rounded-full animate-pulse">
@@ -298,29 +342,67 @@ const ListingCard: React.FC<{ listing: FoodListing; onRequest: (id: string) => v
             </div>
           )}
         </div>
-        <div className="p-4">
-          <h4 className="font-bold text-slate-800 text-lg truncate">{listing.title}</h4>
-          <div className="mt-1 flex items-baseline gap-1">
-            <span className="text-2xl font-bold text-emerald-600">{getListingQty(listing) || '—'}</span>
-            <span className="text-sm text-slate-500">{listing.unit}</span>
+        <div className="p-4 flex flex-col flex-1 min-h-0">
+          <h4 className="font-bold text-slate-800 text-lg leading-snug">{listing.title}</h4>
+          
+          <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50/80 p-3 space-y-2 text-sm">
+            <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Retailer donating</p>
+            <div className="flex items-start gap-2 text-slate-800">
+              <Building className="w-4 h-4 text-emerald-600 mt-0.5 shrink-0" />
+              <div className="min-w-0">
+                <p className="font-semibold">{listing.donorName || 'Retailer'}</p>
+                <p className="text-xs text-slate-500 mt-0.5">Donor account for this surplus listing</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-2 text-slate-700">
+              <MapPin className="w-4 h-4 text-emerald-600 mt-0.5 shrink-0" />
+              <div className="min-w-0 text-xs">
+                <p className="font-medium text-slate-800">Pickup location</p>
+                <p className="mt-0.5">{listing.location || '—'}</p>
+                {listing.donorLocation?.address && listing.donorLocation.address !== listing.location && (
+                  <p className="mt-1 text-slate-500">Store / org address: {listing.donorLocation.address}</p>
+                )}
+              </div>
+            </div>
+            {(donorEmail || donorPhone) && (
+              <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-600 pt-1 border-t border-slate-200/80">
+                {donorEmail && (
+                  <span className="flex items-center gap-1">
+                    <Mail className="w-3.5 h-3.5 text-slate-400" />
+                    {donorEmail}
+                  </span>
+                )}
+                {donorPhone && (
+                  <span className="flex items-center gap-1">
+                    <Phone className="w-3.5 h-3.5 text-slate-400" />
+                    {donorPhone}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
-          <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
-            <Building className="w-3 h-3" />
-            <span className="truncate">{listing.donorName}</span>
+
+          <div className="mt-3 min-h-0 flex-1">
+            <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Description</p>
+            <p className="mt-1 text-sm text-slate-700 whitespace-pre-wrap break-words leading-relaxed">
+              {descText || 'The retailer did not add a written description for this listing.'}
+            </p>
           </div>
+
           {hrsLeft !== null && (
-            <div className={`mt-2 text-xs font-medium ${hrsLeft <= 24 ? 'text-red-500' : 'text-slate-400'}`}>
-              <Clock className="w-3 h-3 inline mr-1" />
+            <div className={`mt-3 text-xs font-medium ${hrsLeft <= 24 ? 'text-red-500' : 'text-slate-500'}`}>
+              <Clock className="w-3.5 h-3.5 inline mr-1 align-text-bottom" />
               {hrsLeft <= 0 ? 'Expired' : `Expires in ${formatHoursRemaining(hrsLeft)}`}
             </div>
           )}
           <button
+            type="button"
             onClick={() => onRequest(listing.id)}
-            disabled={hrsLeft !== null && hrsLeft <= 0}
-            className="mt-4 w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-semibold py-2 rounded-xl transition-colors flex items-center justify-center gap-2"
+            disabled={(hrsLeft !== null && hrsLeft <= 0) || listing.status !== 'available'}
+            className="mt-4 w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-semibold py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2"
           >
             <HandHeart className="w-4 h-4" />
-            Request Donation
+            {listing.status === 'reserved' ? 'Reserved by another party' : 'Request donation'}
           </button>
         </div>
       </div>
@@ -351,8 +433,8 @@ export default function NgoPortal({ profile }: { profile: UserProfile }) {
   // Modal State
   const [selectedListing, setSelectedListing] = useState<FoodListing | null>(null);
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
+  const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
   const [requestForm, setRequestForm] = useState({
-    requestedQty: '',
     preferredPickupTime: '',
     notes: '',
   });
@@ -384,27 +466,26 @@ export default function NgoPortal({ profile }: { profile: UserProfile }) {
 
   // ==================== FIREBASE SUBSCRIPTIONS ====================
   
-  // Fetch listings
+  // Fetch listings: full collection + client filter/sort avoids composite-index failures
+  // (where('status', 'in', ...) + orderBy('createdAt') often needs a manual index and returns nothing on error).
   useEffect(() => {
-    const q = query(
+    setIsLoading(true);
+    const unsubscribe = onSnapshot(
       collection(db, 'listings'),
-      where('status', 'in', ['available', 'active']),
-      orderBy('createdAt', 'desc')
-    );
-    
-    const unsubscribe = onSnapshot(q, 
       (snapshot) => {
-        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FoodListing));
+        const data = snapshot.docs
+          .map((doc) => ({ id: doc.id, ...doc.data() } as FoodListing))
+          .sort((a, b) => listingCreatedMs(b) - listingCreatedMs(a));
         setListings(data);
         setIsLoading(false);
       },
       (error) => {
-        console.error('Error fetching listings:', error);
-        toast.error('Failed to load donations');
+        console.error('Listings listener error:', error);
+        toast.error('Failed to load donations. Check Firestore rules and your connection.');
         setIsLoading(false);
       }
     );
-    
+
     return () => unsubscribe();
   }, []);
   
@@ -442,9 +523,16 @@ export default function NgoPortal({ profile }: { profile: UserProfile }) {
 
   // ==================== DERIVED DATA ====================
   
-  const availableListings = useMemo(() => 
-    listings.filter(l => l.status === 'available'), 
+  const availableListings = useMemo(
+    () => listings.filter((l) => l.status === 'available' || l.status === 'reserved'),
     [listings]
+  );
+
+  /** Listings a retailer marked as a direct donation to this NGO (already claimed on create). */
+  const directDonationListings = useMemo(
+    () =>
+      listings.filter((l) => l.status === 'claimed' && l.claimedBy === profile.uid),
+    [listings, profile.uid]
   );
   
   const myRequests = useMemo(() => 
@@ -506,10 +594,10 @@ export default function NgoPortal({ profile }: { profile: UserProfile }) {
     // Apply search
     if (searchQuery) {
       const queryLower = searchQuery.toLowerCase();
-      filtered = filtered.filter(l => 
+      filtered = filtered.filter((l) =>
         l.title.toLowerCase().includes(queryLower) ||
-        l.donorName.toLowerCase().includes(queryLower) ||
-        l.category.toLowerCase().includes(queryLower)
+        (l.donorName || '').toLowerCase().includes(queryLower) ||
+        (l.category || '').toLowerCase().includes(queryLower)
       );
     }
     
@@ -537,6 +625,8 @@ export default function NgoPortal({ profile }: { profile: UserProfile }) {
         const expiryB = getExpiryDate(b.expiryDate)?.getTime() ?? Infinity;
         return expiryA - expiryB;
       });
+    } else if (sortBy === 'newest') {
+      return [...filtered].sort((a, b) => listingCreatedMs(b) - listingCreatedMs(a));
     } else {
       return filtered;
     }
@@ -565,9 +655,7 @@ export default function NgoPortal({ profile }: { profile: UserProfile }) {
     }
     
     setSelectedListing(listing);
-    const safeQty = getListingQty(listing);
     setRequestForm({
-      requestedQty: safeQty > 0 ? String(safeQty) : '',
       preferredPickupTime: '',
       notes: '',
     });
@@ -575,21 +663,17 @@ export default function NgoPortal({ profile }: { profile: UserProfile }) {
   };
   
   const submitRequest = async () => {
-    if (!selectedListing) return;
-    
-    const requestedQty = Number(requestForm.requestedQty);
-    if (!requestedQty || requestedQty <= 0) {
-      toast.error('Please enter a valid quantity');
-      return;
-    }
-    
+    if (!selectedListing || isSubmittingRequest) return;
+
     const availableQty = getListingQty(selectedListing);
-    if (availableQty > 0 && requestedQty > availableQty) {
-      toast.error(`Only ${availableQty} ${selectedListing.unit || 'units'} available`);
+    if (!availableQty || availableQty <= 0) {
+      toast.error('This listing has no quantity set. Contact the retailer.');
       return;
     }
+    const requestedQty = availableQty;
     
     try {
+      setIsSubmittingRequest(true);
       const referenceNumber = generateReferenceNumber();
       
       await addDoc(collection(db, 'requests'), {
@@ -597,17 +681,17 @@ export default function NgoPortal({ profile }: { profile: UserProfile }) {
         ngoId: profile.uid,
         retailerId: selectedListing.donorId,
         requestedQty,
-        requestedUnit: selectedListing.unit,
+        requestedUnit: selectedListing.unit || 'unit',
         status: 'pending',
         preferredPickupTime: requestForm.preferredPickupTime ? new Date(requestForm.preferredPickupTime) : null,
         note: requestForm.notes,
         referenceNumber,
         ngoSnapshot: {
           organizationName: profile.organizationName || profile.displayName,
-          contactPerson: profile.contactPerson,
-          phoneNumber: profile.phoneNumber,
-          address: profile.address,
-          verificationStatus: profile.verificationStatus,
+          contactPerson: profile.contactPerson || null,
+          phoneNumber: profile.phoneNumber || null,
+          address: profile.address || null,
+          verificationStatus: profile.verificationStatus || 'pending',
         },
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -616,13 +700,14 @@ export default function NgoPortal({ profile }: { profile: UserProfile }) {
       toast.success(`Request submitted! Reference: ${referenceNumber}`);
       setIsRequestModalOpen(false);
       setSelectedListing(null);
-      setRequestForm({ requestedQty: '', preferredPickupTime: '', notes: '' });
+      setRequestForm({ preferredPickupTime: '', notes: '' });
       
       // Send notification (simulate)
       setNotificationCount(prev => prev + 1);
     } catch (error) {
-      console.error('Error submitting request:', error);
-      toast.error('Failed to submit request. Please try again.');
+      handleFirestoreError(error, OperationType.CREATE, 'requests');
+    } finally {
+      setIsSubmittingRequest(false);
     }
   };
   
@@ -1018,6 +1103,45 @@ export default function NgoPortal({ profile }: { profile: UserProfile }) {
           </select>
         </div>
       </div>
+
+      {directDonationListings.length > 0 && (
+        <div className="rounded-2xl border border-emerald-200 bg-white/90 p-5 shadow-sm space-y-4">
+          <div>
+            <h2 className="text-lg font-bold text-gray-900">Directed to your organization</h2>
+            <p className="text-sm text-gray-500 mt-1">
+              Retailers created these as direct donations for you. They do not appear under open listings. Use My Requests and Directions for pickup.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {directDonationListings.map((listing) => {
+              const matchReq = myRequests.find((r) => r.listingId === listing.id);
+              return (
+                <div key={listing.id} className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-4 flex flex-col gap-2">
+                  <div className="font-bold text-gray-900 truncate">{listing.title}</div>
+                  <div className="text-xs text-gray-500 truncate">{listing.location || '—'}</div>
+                  <div className="text-sm text-emerald-800 font-semibold">
+                    {getListingQty(listing) || '—'} {listing.unit || ''}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (matchReq) setSelectedRequestId(matchReq.id);
+                      setActiveTab(matchReq?.status === 'approved' ? 'directions' : 'my-requests');
+                    }}
+                    className="mt-1 w-full py-2 rounded-xl bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition-colors"
+                  >
+                    {matchReq
+                      ? matchReq.status === 'approved'
+                        ? 'Open directions'
+                        : 'View in My Requests'
+                      : 'Open My Requests'}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
       
       {/* Listings Grid */}
       {isLoading ? (
@@ -1229,13 +1353,19 @@ export default function NgoPortal({ profile }: { profile: UserProfile }) {
           <div className="p-6">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* Map Section */}
-              <div className="rounded-xl overflow-hidden border border-gray-200">
-                <div className="bg-gray-100 h-64 flex items-center justify-center relative">
-                  <div className="text-center">
-                    <MapPin className="w-12 h-12 text-emerald-500 mx-auto mb-2" />
-                    <p className="text-gray-500 text-sm">Interactive map preview</p>
-                    <p className="text-xs text-gray-400 mt-1">{selectedRequestListing.location || 'Pickup location'}</p>
-                  </div>
+              <div className="rounded-xl overflow-hidden border border-gray-200 bg-gray-100">
+                <div className="relative h-64">
+                  <iframe
+                    src={`https://maps.google.com/maps?q=${encodeURIComponent(
+                      selectedRequestListing.donorLocation?.lat && selectedRequestListing.donorLocation?.lng
+                        ? `${selectedRequestListing.donorLocation.lat},${selectedRequestListing.donorLocation.lng}`
+                        : selectedRequestListing.location || selectedRequestListing.donorName
+                    )}&z=15&output=embed`}
+                    className="h-full w-full border-0"
+                    loading="lazy"
+                    referrerPolicy="no-referrer-when-downgrade"
+                    title="Pickup location map"
+                  />
                   <a
                     href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
                       selectedRequestListing.donorLocation?.lat && selectedRequestListing.donorLocation?.lng
@@ -1254,6 +1384,17 @@ export default function NgoPortal({ profile }: { profile: UserProfile }) {
               
               {/* Instructions Section */}
               <div className="space-y-4">
+                <div className="rounded-xl overflow-hidden border border-gray-200 bg-white">
+                  <img
+                    src="https://images.unsplash.com/photo-1488459716781-31db52582fe9?auto=format&fit=crop&w=1200&q=70"
+                    alt="NGO pickup guide"
+                    className="w-full h-36 object-cover"
+                    referrerPolicy="no-referrer"
+                  />
+                  <div className="p-3 text-xs text-gray-600">
+                    Pickup tip: arrive within your assigned window and confirm reference details before loading.
+                  </div>
+                </div>
                 <div className="bg-blue-50 rounded-xl p-4">
                   <h3 className="font-semibold text-gray-900 flex items-center gap-2 mb-3">
                     <AlertCircle className="w-4 h-4 text-blue-600" />
@@ -1563,7 +1704,7 @@ export default function NgoPortal({ profile }: { profile: UserProfile }) {
                   </label>
                 )}
               </div>
-              {existingDoc?.fileBase64 && existingDoc.status === 'approved' && (
+              {existingDoc?.fileBase64 && (
                 <button
                   onClick={() => setPreviewDoc(existingDoc)}
                   className="mt-3 text-xs text-emerald-600 hover:text-emerald-700 flex items-center gap-1"
@@ -1629,6 +1770,14 @@ export default function NgoPortal({ profile }: { profile: UserProfile }) {
             <AlertCircle className="w-4 h-4 text-blue-600" />
             Next Steps
           </h3>
+          <div className="mb-3 rounded-lg overflow-hidden border border-gray-200">
+            <img
+              src="https://images.unsplash.com/photo-1464226184884-fa280b87c399?auto=format&fit=crop&w=1200&q=70"
+              alt="Verification process guide"
+              className="w-full h-28 object-cover"
+              referrerPolicy="no-referrer"
+            />
+          </div>
           {profile.verificationStatus === 'pending' ? (
             <ul className="text-sm text-gray-600 space-y-1 list-disc list-inside">
               <li>Upload all required documents in the Document Manager</li>
@@ -1660,8 +1809,21 @@ export default function NgoPortal({ profile }: { profile: UserProfile }) {
   ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-emerald-50/20">
-      <div className="flex">
+    <div className="relative min-h-screen overflow-hidden bg-gray-50">
+      <div
+        className="pointer-events-none absolute inset-0 z-0 bg-cover bg-center bg-no-repeat"
+        style={{
+          backgroundImage:
+            "url('https://images.unsplash.com/photo-1488521787991-ed7bbaae773f?auto=format&fit=crop&w=1920&q=75')",
+        }}
+        aria-hidden
+      />
+      <div
+        className="pointer-events-none absolute inset-0 z-0 bg-gradient-to-br from-white/92 via-emerald-50/88 to-teal-100/75"
+        aria-hidden
+      />
+      <div className="relative z-10 flex min-h-screen">
+      <div className="flex w-full">
         {/* Sidebar */}
         <aside className="w-64 bg-white border-r border-gray-100 min-h-screen sticky top-0">
           <div className="p-6">
@@ -1758,6 +1920,7 @@ export default function NgoPortal({ profile }: { profile: UserProfile }) {
           </div>
         </main>
       </div>
+      </div>
       
       {/* Request Modal */}
       {isRequestModalOpen && selectedListing && (
@@ -1775,21 +1938,11 @@ export default function NgoPortal({ profile }: { profile: UserProfile }) {
                 <p className="text-sm text-gray-500 mt-1">from {selectedListing.donorName}</p>
                 <div className="mt-2 flex items-baseline gap-1">
                   <span className="text-2xl font-bold text-emerald-600">{getListingQty(selectedListing) || '—'}</span>
-                  <span className="text-sm text-gray-500">{selectedListing.unit} available</span>
+                  <span className="text-sm text-gray-500">{selectedListing.unit || 'units'} listed</span>
                 </div>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Quantity to Request *</label>
-                <input
-                  type="number"
-                  value={requestForm.requestedQty}
-                  onChange={(e) => setRequestForm({ ...requestForm, requestedQty: e.target.value })}
-                  min="1"
-                  max={getListingQty(selectedListing) || undefined}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-300"
-                />
-                <p className="text-xs text-gray-500 mt-1">Maximum: {getListingQty(selectedListing) || '—'} {selectedListing.unit || 'units'}</p>
+                <p className="text-xs text-emerald-700 mt-2 font-medium">
+                  Your claim will be for the full listed quantity.
+                </p>
               </div>
               
               <div>
@@ -1815,12 +1968,15 @@ export default function NgoPortal({ profile }: { profile: UserProfile }) {
               
               <div className="flex gap-3 pt-4">
                 <button
+                  type="button"
                   onClick={submitRequest}
-                  className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 rounded-lg transition-colors"
+                  disabled={isSubmittingRequest}
+                  className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold py-2 rounded-lg transition-colors"
                 >
-                  Submit Request
+                  {isSubmittingRequest ? 'Submitting...' : 'Submit Request'}
                 </button>
                 <button
+                  type="button"
                   onClick={() => setIsRequestModalOpen(false)}
                   className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-2 rounded-lg transition-colors"
                 >

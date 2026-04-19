@@ -39,12 +39,21 @@ export interface FoodListing {
   id: string;
   donorId: string;
   donorName: string;
+  /** Optional contact copied from retailer profile when listing is created */
+  donorEmail?: string;
+  donorPhone?: string;
   title: string;
+  /** Free text; may be derived from donation product picks when created from structured form */
   description: string;
+  /** Structured retail taxonomy (Create Donation Listing) */
+  donationSectionId?: string;
+  donationSectionLabel?: string;
+  donationProductType?: string;
   category: 'produce' | 'bakery' | 'dairy' | 'meat' | 'pantry' | 'prepared';
   quantity: string; // legacy free-text
   qty?: number;
   unit?: 'kg' | 'g' | 'l' | 'ml' | 'unit' | 'box' | 'crate' | 'bag';
+  /** Image as HTTPS URL, or `data:<mime>;base64,...` when stored from retailer upload */
   photoUrl?: string;
   donorLocation?: {
     address?: string;

@@ -148,6 +148,7 @@ service cloud.firestore {
       // NGOs can manage only their own documents.
       // Admin can review and update document statuses.
       allow read: if isAdmin() ||
+                  isDonor() ||
                   (isAuthenticated() && resource.data.ngoId == request.auth.uid);
       allow create: if isAuthenticated() &&
                     request.resource.data.ngoId == request.auth.uid;
